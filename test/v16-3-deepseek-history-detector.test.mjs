@@ -11,7 +11,7 @@
 //
 // These tests use a real browser against a LOCAL fixture that reproduces the
 // measured shape. No network, no DeepSeek.
-import test from "node:test";
+import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
@@ -26,7 +26,14 @@ import {
   encodeWorkerResponse,
 } from "../lib/browser-worker-protocol.mjs";
 
-const requireFromProject = createRequire(import.meta.url.replace(/test[/\\].*$/, "package.json"));
+// Resolve Playwright from the repository root regardless of the test file's
+// location or the current working directory.
+const requireFromProject = createRequire(new URL("../package.json", import.meta.url));
+
+// The user's machine ships Microsoft Edge; no Chromium/Firefox/WebKit download
+// is performed by this test. `UES_PLAYWRIGHT_CHANNEL` may override the channel
+// for a deliberate cross-browser check, but Edge is the supported default.
+const BROWSER_CHANNEL = process.env.UES_PLAYWRIGHT_CHANNEL || "msedge";
 
 const CHAT_PATH = "/a/chat/s/";
 
@@ -54,10 +61,34 @@ const measuredPage = (sidebar) => `<!doctype html><html><body>
  * Runs the REAL probe script in a REAL browser against a local fixture served at
  * the real origin, so `location.origin` and relative href resolution behave
  * exactly as they do on the live page.
+ *
+ * Edge is launched ONCE for the whole file and every test gets a fresh context.
+ * Launching a browser per test cost ~7s each (11 tests), which pushed the file
+ * past the bounded runner's 45s per-file hang bound even though every assertion
+ * passed. A context still isolates cookies/storage/routes, so the fixture
+ * remains independent per test; only the expensive process start is shared.
  */
+let browserPromise = null;
+
+function sharedBrowser() {
+  if (!browserPromise) {
+    const { chromium } = requireFromProject("playwright");
+    // `channel: "msedge"` uses the installed Microsoft Edge build. Never download
+    // a browser binary for this test, and never skip it because Chromium is absent.
+    browserPromise = chromium.launch({ channel: BROWSER_CHANNEL, headless: true });
+  }
+  return browserPromise;
+}
+
+after(async () => {
+  if (!browserPromise) return;
+  const browser = await browserPromise;
+  browserPromise = null;
+  await browser.close();
+});
+
 async function withFixturePage(run) {
-  const { chromium } = requireFromProject("playwright");
-  const browser = await chromium.launch({ headless: true });
+  const browser = await sharedBrowser();
   const context = await browser.newContext();
   let html = "";
   await context.route("https://chat.deepseek.com/**", (route) =>
@@ -73,7 +104,7 @@ async function withFixturePage(run) {
   try {
     return await run(measure);
   } finally {
-    await browser.close();
+    await context.close();
   }
 }
 

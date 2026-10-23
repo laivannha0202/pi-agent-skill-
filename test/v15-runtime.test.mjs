@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises"
+import { realpathSync } from "node:fs"
 import { spawnSync } from "node:child_process"
 import net from "node:net"
 import os from "node:os"
@@ -50,7 +51,7 @@ test("V15.12 workspace root guard refuses parent-directory artifact spill", asyn
 
     const resolved = resolveGitWorkspaceRoot(repo)
     assert.equal(resolved.ok, true)
-    assert.equal(resolved.root, path.resolve(repo))
+    assert.equal(resolved.root, realpathSync.native(repo))
 
     const parent = resolveGitWorkspaceRoot(base)
     assert.equal(parent.ok, false)

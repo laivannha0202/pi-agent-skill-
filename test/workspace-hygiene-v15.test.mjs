@@ -8,6 +8,7 @@ import path from "node:path"
 import {
   auditUnicodeSource,
   captureWorkspaceHygieneBaseline,
+  classifyTransientArtifact,
   postRunFileHygiene,
   preFinalWorkspaceAudit,
 } from "../lib/workspace-hygiene.mjs"
@@ -96,6 +97,42 @@ test("Read-only agent transient output is cleaned without becoming a source muta
     assert.equal(existsSync(path.join(root, "read-only.tmp")), false)
     assert.equal(result.safe, true)
     assert.equal(result.changed.length, 0)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// V16.18: a concurrent suite sibling's type-strip probe (pi/extensions/__*.mjs,
+// git-ignored) must never read as a read-only specialist's source mutation. The
+// read-only guard compares a baseline snapshot against live git status, so a
+// sibling probe created between those two reads would otherwise surface as
+// `read-only-agent-mutation` and flip an unrelated run's verifier to FAIL
+// (observed: V16.17 prepared-execution-production FAIL in suite, 5/5 PASS
+// isolated). Probes stay high-confidence transient: auto-cleaned, never findings.
+test("V16.18 concurrent type-strip probes are transient, never a read-only mutation", async () => {
+  const root = await repoFixture("ues-hygiene-probe-")
+  try {
+    await mkdir(path.join(root, "pi", "extensions"), { recursive: true })
+    const baseline = captureWorkspaceHygieneBaseline(root)
+    await writeFile(path.join(root, "pi", "extensions", "__v1617_structured_probe_99999_1.mjs"), "// sibling probe\n")
+
+    assert.deepEqual(
+      classifyTransientArtifact("pi/extensions/__v1617_structured_probe_99999_1.mjs"),
+      { transient: true, confidence: "high", reason: "bounded-test-type-strip-probe" },
+    )
+    // A probe OUTSIDE pi/extensions/ or without the __ prefix is not covered:
+    // the guard must still fail closed on those.
+    assert.equal(classifyTransientArtifact("pi/extensions/ues.ts").transient, false)
+    assert.equal(classifyTransientArtifact("src/__helper.mjs").transient, false)
+
+    const result = await postRunFileHygiene(root, {
+      baseline,
+      taskText: "Inspect only",
+      allowSourceMutations: false,
+      autoClean: true,
+    })
+    assert.equal(result.safe, true)
+    assert.equal(result.findings.some((item) => item.kind === "read-only-agent-mutation"), false)
   } finally {
     await rm(root, { recursive: true, force: true })
   }

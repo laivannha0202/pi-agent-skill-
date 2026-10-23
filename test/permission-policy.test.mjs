@@ -4,7 +4,9 @@ import os from "node:os"
 import path from "node:path"
 import test from "node:test"
 import {
+  compilePolicyLattice,
   evaluatePermissionRules,
+  evaluatePolicyLattice,
   permissionPatternMatches,
   PermissionPolicyStore,
   permissionRecoveryHint,
@@ -109,4 +111,108 @@ test("store hot-reloads when config file changes", async () => {
   }))
   const after = await store.evaluate({ action: "shell", resources: ["git push origin main"] })
   assert.equal(after.decision.effect, "allow")
+})
+
+test("agent/role rules narrow but never widen the repo baseline", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "ues-permission-monotonic-"))
+  const file = path.join(dir, "permissions.json")
+  await writeFile(file, JSON.stringify({
+    defaultEffect: "allow",
+    permissions: [
+      { action: "shell", resource: "*", effect: "deny" },
+      { action: "edit", resource: "*", effect: "ask" },
+    ],
+    agents: {
+      "ues-child": {
+        permissions: [
+          { action: "shell", resource: "*", effect: "allow" },
+          { action: "edit", resource: "src/*", effect: "allow" },
+          { action: "edit", resource: "secrets/*", effect: "deny" },
+        ],
+      },
+    },
+  }))
+  const store = new PermissionPolicyStore(file)
+  const shell = await store.evaluate(
+    { action: "shell", resources: ["git status"] },
+    { agent: "ues-child" },
+  )
+  assert.equal(shell.decision.effect, "deny", "a role allow cannot erase a repo deny")
+  assert.equal(shell.decision.decisions[0].matchedRule.index, 0)
+
+  const edit = await store.evaluate(
+    { action: "edit", resources: ["src/a.ts"] },
+    { agent: "ues-child" },
+  )
+  assert.equal(edit.decision.effect, "ask", "a role allow cannot erase a repo ask")
+
+  const narrowed = await store.evaluate(
+    { action: "edit", resources: ["secrets/token.txt"] },
+    { agent: "ues-child" },
+  )
+  assert.equal(narrowed.decision.effect, "deny", "a role deny still narrows")
+})
+
+test("agent allow cannot override a default-deny baseline", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "ues-permission-default-deny-"))
+  const file = path.join(dir, "permissions.json")
+  await writeFile(file, JSON.stringify({
+    defaultEffect: "deny",
+    permissions: [],
+    agents: {
+      "ues-child": { permissions: [{ action: "shell", resource: "*", effect: "allow" }] },
+    },
+  }))
+  const store = new PermissionPolicyStore(file)
+  const decision = await store.evaluate(
+    { action: "shell", resources: ["npm test"] },
+    { agent: "ues-child" },
+  )
+  assert.equal(decision.decision.effect, "deny")
+})
+
+test("the exposure lattice applies the same monotonic role boundary", () => {
+  const plan = compilePolicyLattice([
+    { name: "repo", rules: [{ action: "shell", resource: "*", effect: "deny" }] },
+    { name: "role", rules: [{ action: "shell", resource: "*", effect: "allow" }] },
+  ], ["bash", "read"])
+  assert.equal(plan.tools.includes("bash"), false, "a role allow must not expose a repo-denied tool")
+  assert.equal(plan.tools.includes("read"), true)
+  assert.equal(plan.hidden[0].reason, "role-layer-monotonic-deny")
+
+  const decision = evaluatePolicyLattice([
+    { name: "repo", rules: [{ action: "shell", resource: "*", effect: "deny" }] },
+    { name: "role", rules: [{ action: "shell", resource: "*", effect: "allow" }] },
+  ], { action: "shell", resource: "git status" })
+  assert.equal(decision.decision.effect, "deny")
+
+  // An explicit user layer remains able to override (documented precedence).
+  const user = evaluatePolicyLattice([
+    { name: "repo", rules: [{ action: "shell", resource: "*", effect: "deny" }] },
+    { name: "user", rules: [{ action: "shell", resource: "git status", effect: "allow" }] },
+  ], { action: "shell", resource: "git status" })
+  assert.equal(user.decision.effect, "allow")
+})
+
+test("permission store errors fail closed instead of silently allowing", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "ues-permission-invalid-"))
+  const file = path.join(dir, "permissions.json")
+
+  await writeFile(file, "{ not-json")
+  const broken = new PermissionPolicyStore(file)
+  await assert.rejects(() => broken.evaluate({ action: "shell", resources: ["git status"] }), /JSON/i)
+
+  await writeFile(file, JSON.stringify({
+    permissions: [{ action: "shell", resource: "*", effect: "maybe" }],
+  }))
+  const invalid = new PermissionPolicyStore(file)
+  await assert.rejects(
+    () => invalid.evaluate({ action: "shell", resources: ["git status"] }),
+    /effect=allow\|deny\|ask/,
+  )
+
+  const missing = new PermissionPolicyStore(path.join(dir, "absent.json"))
+  const unconfigured = await missing.evaluate({ action: "shell", resources: ["git status"] })
+  assert.equal(unconfigured.configured, false)
+  assert.equal(unconfigured.decision, null)
 })

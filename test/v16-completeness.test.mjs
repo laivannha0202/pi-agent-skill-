@@ -8,6 +8,7 @@ import {
   compileRequirementLedger,
   evaluateRequirementEvidence,
   normalizeRequirementIds,
+  requirementLedgerAllowsDeterministicFastPass,
   validateRequirementPlanCoverage,
 } from "../lib/requirement-contract.mjs"
 import { buildFinalVerdictMatrix } from "../lib/execution-contract.mjs"
@@ -75,6 +76,49 @@ test("V16.1 bare PASS claims without concrete detail do NOT verify", () => {
   const failed = evaluateRequirementEvidence(ledger, [`UES_REQUIREMENT: ${id} FAIL - npm test: 1 failing`])
   assert.equal(failed.status, "REQUIREMENTS_FAIL")
   assert.ok(failed.failed.includes(id))
+})
+
+test("V16.18 a command-only read-only ledger reaches the deterministic path without a model verifier", () => {
+  // The exact prompt that previously skipped the deterministic read-only path
+  // and reached a paid verifier model. Its ledger is a single MUST_NOT, which the
+  // conservative rule must still refuse for a post-implementation FAST pass.
+  const ledger = compileRequirementLedger(
+    "Run only git status --short and git rev-parse HEAD. Do not modify files.",
+  )
+  assert.equal(ledger.total, 1)
+  assert.equal(ledger.requirements[0].kind, "MUST_NOT")
+  assert.equal(
+    requirementLedgerAllowsDeterministicFastPass(ledger).allowed,
+    false,
+    "the post-implementation FAST gate must stay conservative",
+  )
+  const readOnly = requirementLedgerAllowsDeterministicFastPass(ledger, { readOnlyInvariant: true })
+  assert.equal(readOnly.allowed, true)
+  assert.equal(readOnly.reason, "read-only-invariant-covers-requirements")
+
+  // A VERIFY obligation ("check the build") is NOT proven by Git inspection and
+  // must keep the explicit verifier even on the read-only route.
+  const verify = compileRequirementLedger(
+    "Run only git status --short and check the build. Do not modify files.",
+  )
+  assert.ok(verify.requirements.some((item) => item.kind === "VERIFY"))
+  assert.equal(
+    requirementLedgerAllowsDeterministicFastPass(verify, { readOnlyInvariant: true }).allowed,
+    false,
+  )
+
+  // Plain MUST + MUST_NOT is covered by the read-only invariant...
+  const mixed = compileRequirementLedger("Must run git status --short. Do not modify files.")
+  assert.deepEqual(
+    [...new Set(mixed.requirements.map((item) => item.kind))].sort(),
+    ["MUST", "MUST_NOT"],
+  )
+  assert.equal(
+    requirementLedgerAllowsDeterministicFastPass(mixed, { readOnlyInvariant: true }).allowed,
+    true,
+  )
+  // ...but the option is an explicit opt-in, never the default.
+  assert.equal(requirementLedgerAllowsDeterministicFastPass(mixed).allowed, false)
 })
 
 test("V16.1 device-gated work yields an explicit device-pending verdict, never full PASS", () => {

@@ -84,7 +84,10 @@ test("V16.16 wiring: verification proof composition changes verification work", 
   assert.ok(text.includes("mustRunFresh"), "must-run-fresh commands are never recorded for the verifier")
   assert.ok(text.includes("consumedReceipts"), "consumed receipts are never attached as evidence")
   assert.ok(text.includes("verifierOwnsVerdict"), "verifier PASS ownership is never pinned")
-  assert.ok(text.includes("finalRelease: input.finalRelease === true"), "final release does not stay fresh")
+  assert.ok(
+    /finalRelease:\s*(?:\(input as any\)|input)\.finalRelease\s*===\s*true/.test(text),
+    "final release does not stay fresh",
+  )
   assert.ok(text.includes("lockfileChanged"), "lockfile changes do not invalidate reuse")
   assert.ok(text.includes("configChanged"), "config changes do not invalidate reuse")
   assert.ok(text.includes("affectedBySiblings"), "sibling cross-impact is not checked")

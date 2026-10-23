@@ -533,6 +533,26 @@ test("D4: the light stage stays bounded and never whole-file reads a big file", 
   assert.ok(light.contextManifest.excerpts.length <= 4)
 })
 
+test("D6: a LIGHT pack that misses a declared file escalates on measured recall", async (t) => {
+  const root = makeFixture()
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const light = await buildLightTaskContext(root, {
+    id: "t",
+    title: "Fix the submit button staying disabled after the API fails",
+    summary: "LoginForm owns the submitting state",
+    acceptance: [],
+    verification: [],
+    files: { modify: ["src/login-form.tsx", "src/does-not-exist.ts"] },
+  })
+  // The pack still has a real excerpt, so the no-excerpt and no-scope gates do
+  // not fire. Only the measured required-file recall proves it is incomplete.
+  assert.ok(light.contextManifest.excerpts.length > 0)
+  assert.equal(light.contextQuality.requiredFileRecall, 0.5)
+  const gate = lightContextInsufficient(light)
+  assert.equal(gate.insufficient, true, JSON.stringify(gate.reasons))
+  assert.ok(gate.reasons.includes("context-quality-below-threshold"))
+})
+
 test("D5: the bounded failure delta replaces the verbose log", () => {
   const noisy = Array.from({ length: 400 }, (_, i) => `  at frame${i} (file${i}.js:${i})`).join("\n")
   const delta = failureDelta("FAIL test\n" + noisy + "\n1 failed, 2 passed")
@@ -664,9 +684,16 @@ test("H1: nested work cannot exceed a global class cap", async () => {
   const governor = createResourceGovernor({ caps: { CPU_HEAVY: 2 } })
   const a = await governor.acquire(RESOURCE_CLASS.CPU_HEAVY, { taskId: "parent" })
   assert.ok(a)
-  // The same task nested in the same class consumes DEPTH, not width.
-  const nested = await governor.acquire(RESOURCE_CLASS.CPU_HEAVY, { taskId: "parent" })
+  // Re-entrancy is granted ONLY to the holder of the live parent handle. A
+  // reused taskId without that proof is an independent width request (tested
+  // under a cap of 1 in H11), never a free pass.
+  const nested = await governor.acquire(RESOURCE_CLASS.CPU_HEAVY, {
+    taskId: "parent",
+    parentLease: a,
+  })
   assert.ok(nested)
+  assert.equal(nested.inherited, true)
+  assert.equal(nested.units, 0, "a nested acquisition consumes DEPTH, not another unit")
   assert.equal(governor.live(RESOURCE_CLASS.CPU_HEAVY), 1, "re-entrancy must not consume a second unit")
   const other = await governor.acquire(RESOURCE_CLASS.CPU_HEAVY, { taskId: "sibling" })
   assert.ok(other, "a second unit is still available")
@@ -677,13 +704,14 @@ test("H1: nested work cannot exceed a global class cap", async () => {
   })
   assert.equal(overflow, null, "the global cap must refuse an over-cap unit")
   assert.equal(governor.state().timedOut, 1)
-  // Releasing the nested lease must NOT free the outer unit.
-  governor.release(nested)
+  // Releasing the nested handle must NOT free the outer unit.
+  assert.equal(governor.release(nested), true)
   assert.equal(governor.live(RESOURCE_CLASS.CPU_HEAVY), 2, "a nested release is depth, not width")
   governor.release(a)
   assert.equal(governor.live(RESOURCE_CLASS.CPU_HEAVY), 1)
   governor.release(other)
   assert.equal(governor.live(RESOURCE_CLASS.CPU_HEAVY), 0)
+  assert.equal(governor.state().leases, 0)
 })
 
 test("H2: abort releases every lease", async () => {
@@ -700,6 +728,10 @@ test("H2: abort releases every lease", async () => {
   }, { signal: controller.signal })
   assert.equal(first.ok, true)
   assert.equal(governor.live(RESOURCE_CLASS.WRITER), 0, "the abort path released the unit")
+  const state = governor.state()
+  assert.equal(state.aborted, 1, "the aborted waiter is counted exactly once")
+  assert.equal(state.classes[RESOURCE_CLASS.WRITER].waiting, 0, "no aborted waiter stayed queued")
+  assert.equal(state.leases, 0)
 })
 
 test("H3: a failure releases the lease", async () => {
@@ -709,8 +741,11 @@ test("H3: a failure releases the lease", async () => {
     /boom/,
   )
   assert.equal(governor.live(RESOURCE_CLASS.LSP), 0, "a throw must not strand a unit")
+  assert.equal(governor.state().leases, 0, "a throw must not leave a lease record behind")
+  assert.ok(governor.state().waitMsTotal >= 0)
   const again = await governor.withLease(RESOURCE_CLASS.LSP, async () => "ok")
   assert.equal(again.ok, true)
+  assert.ok(again.waitedMs >= 0, "waitedMs is a real, non-negative duration")
 })
 
 test("H4: no deadlock when LSP + test + child model compete", async () => {
@@ -774,6 +809,309 @@ test("H7: the advisor consult is a MODEL_CHILD lease that fails OPEN, never bloc
   for (const value of Object.values(caps)) {
     assert.ok(Number.isFinite(value) && value >= 1 && value <= 6, `cap ${value} must stay conservative`)
   }
+})
+
+test("H8: caps are accounted in UNITS, not in lease records", async () => {
+  const governor = createResourceGovernor({ caps: { CPU_HEAVY: 3 } })
+  const two = await governor.acquire(RESOURCE_CLASS.CPU_HEAVY, { taskId: "u2", units: 2 })
+  assert.ok(two)
+  assert.equal(two.units, 2)
+  assert.equal(governor.live(RESOURCE_CLASS.CPU_HEAVY), 2, "a 2-unit lease occupies 2 units")
+  assert.equal(governor.headroom(RESOURCE_CLASS.CPU_HEAVY), 1)
+
+  // 3-unit cap, 2 held, another 2 cannot fit even though the MAP has one entry.
+  const denied = await governor.acquire(RESOURCE_CLASS.CPU_HEAVY, {
+    taskId: "u2-again",
+    units: 2,
+    timeoutMs: 25,
+  })
+  assert.equal(denied, null)
+  assert.equal(governor.live(RESOURCE_CLASS.CPU_HEAVY), 2)
+  assert.equal(governor.state().timedOut, 1)
+
+  // 3-unit cap, 2 held, 1 more DOES fit.
+  assert.equal(governor.canAdmit(RESOURCE_CLASS.CPU_HEAVY, 1), true)
+  assert.equal(governor.canAdmit(RESOURCE_CLASS.CPU_HEAVY, 2), false)
+  const one = await governor.acquire(RESOURCE_CLASS.CPU_HEAVY, { taskId: "u1", units: 1 })
+  assert.ok(one)
+  assert.equal(governor.live(RESOURCE_CLASS.CPU_HEAVY), 3)
+  assert.equal(governor.headroom(RESOURCE_CLASS.CPU_HEAVY), 0)
+
+  governor.release(two)
+  governor.release(one)
+  assert.equal(governor.live(RESOURCE_CLASS.CPU_HEAVY), 0)
+  assert.equal(governor.state().units, 0)
+})
+
+test("H9: malformed caps and units are rejected, never coerced", async () => {
+  for (const caps of [
+    { WRITER: 0 },
+    { WRITER: -1 },
+    { WRITER: 1.5 },
+    { WRITER: Number.NaN },
+    { WRITER: "many" },
+    { NOT_A_CLASS: 2 },
+  ]) {
+    assert.throws(() => createResourceGovernor({ caps }), RangeError, JSON.stringify(caps))
+  }
+
+  const governor = createResourceGovernor({ caps: { CPU_HEAVY: 2 }, defaultTimeoutMs: 20 })
+  for (const units of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, true, null]) {
+    assert.equal(
+      await governor.acquire(RESOURCE_CLASS.CPU_HEAVY, { taskId: `bad-${String(units)}`, units }),
+      null,
+      `units=${String(units)} must be refused`,
+    )
+  }
+  // A request larger than the class ceiling can never be admitted; refuse it
+  // immediately instead of burning the caller's whole timeout.
+  let ran = false
+  const oversized = await governor.withLease(
+    RESOURCE_CLASS.CPU_HEAVY,
+    async () => { ran = true },
+    { units: 3 },
+  )
+  assert.equal(oversized.ok, false)
+  assert.equal(oversized.reason, "units-exceed-cap")
+  assert.equal(ran, false, "work must never run without a lease")
+  assert.equal(governor.live(RESOURCE_CLASS.CPU_HEAVY), 0)
+  assert.ok(governor.state().refused >= 8)
+})
+
+test("H10: anonymous acquisitions and reused taskIds never share a unit", async () => {
+  const anonymous = createResourceGovernor({ caps: { WRITER: 1 }, defaultTimeoutMs: 20 })
+  const first = await anonymous.acquire(RESOURCE_CLASS.WRITER)
+  assert.ok(first)
+  assert.notEqual(first.taskId, "anonymous", "anonymous work gets a unique identity")
+  const second = await anonymous.acquire(RESOURCE_CLASS.WRITER, { timeoutMs: 25 })
+  assert.equal(second, null, "two anonymous acquisitions are two independent units")
+  assert.equal(anonymous.live(RESOURCE_CLASS.WRITER), 1)
+  anonymous.release(first)
+
+  const reused = createResourceGovernor({ caps: { WRITER: 1 }, defaultTimeoutMs: 20 })
+  const owner = await reused.acquire(RESOURCE_CLASS.WRITER, { taskId: "same-task" })
+  assert.ok(owner)
+  const impostor = await reused.acquire(RESOURCE_CLASS.WRITER, { taskId: "same-task", timeoutMs: 25 })
+  assert.equal(impostor, null, "a matching taskId without the parent handle is not re-entrancy")
+  assert.equal(reused.live(RESOURCE_CLASS.WRITER), 1)
+  assert.equal(reused.state().reentries, 0)
+  reused.release(owner)
+  const later = await reused.acquire(RESOURCE_CLASS.WRITER, { taskId: "same-task", timeoutMs: 50 })
+  assert.ok(later, "the identity is reusable once the previous holder releases")
+  reused.release(later)
+})
+
+test("H11: true nesting is verified by a live parent handle from THIS governor", async () => {
+  const governor = createResourceGovernor({ caps: { CPU_HEAVY: 1 } })
+  const parent = await governor.acquire(RESOURCE_CLASS.CPU_HEAVY, { taskId: "run-1" })
+  assert.ok(parent)
+
+  const nested = await governor.acquire(RESOURCE_CLASS.CPU_HEAVY, {
+    taskId: "run-1",
+    parentLease: parent,
+  })
+  assert.ok(nested)
+  assert.equal(nested.leaseId, parent.leaseId)
+  assert.equal(governor.live(RESOURCE_CLASS.CPU_HEAVY), 1)
+  assert.equal(governor.leaseCount(RESOURCE_CLASS.CPU_HEAVY), 1)
+  const deepest = await governor.acquire(RESOURCE_CLASS.CPU_HEAVY, { parentLease: nested })
+  assert.ok(deepest)
+  assert.equal(governor.state().classes[RESOURCE_CLASS.CPU_HEAVY].live, 1)
+
+  // A parent handle is only valid for its own class, task and governor.
+  const wrongClass = await governor.withLease(RESOURCE_CLASS.LSP, async () => "never", {
+    parentLease: parent,
+  })
+  assert.equal(wrongClass.ok, false)
+  assert.equal(wrongClass.reason, "invalid-parent")
+  const wrongTask = await governor.withLease(RESOURCE_CLASS.CPU_HEAVY, async () => "never", {
+    taskId: "run-2",
+    parentLease: parent,
+  })
+  assert.equal(wrongTask.ok, false)
+  assert.equal(wrongTask.reason, "parent-task-mismatch")
+  const foreign = createResourceGovernor({ caps: { CPU_HEAVY: 1 } })
+  const foreignParent = await foreign.acquire(RESOURCE_CLASS.CPU_HEAVY, { taskId: "foreign" })
+  const crossGovernor = await governor.withLease(RESOURCE_CLASS.CPU_HEAVY, async () => "never", {
+    parentLease: foreignParent,
+  })
+  assert.equal(crossGovernor.ok, false)
+  assert.equal(crossGovernor.reason, "invalid-parent")
+  foreign.release(foreignParent)
+
+  assert.equal(governor.release(deepest), true)
+  assert.equal(governor.release(nested), true)
+  assert.equal(governor.live(RESOURCE_CLASS.CPU_HEAVY), 1, "child releases leave the parent's unit held")
+  assert.equal(governor.release(parent), true)
+  assert.equal(governor.live(RESOURCE_CLASS.CPU_HEAVY), 0)
+})
+
+test("H12: double release is idempotent and cannot free someone else's unit", async () => {
+  const governor = createResourceGovernor({ caps: { WRITER: 1 } })
+  const first = await governor.acquire(RESOURCE_CLASS.WRITER, { taskId: "first" })
+  assert.equal(governor.release(first), true)
+  assert.equal(governor.release(first), false, "the second release is a no-op")
+  assert.equal(governor.live(RESOURCE_CLASS.WRITER), 0)
+
+  const second = await governor.acquire(RESOURCE_CLASS.WRITER, { taskId: "second" })
+  assert.ok(second)
+  assert.equal(governor.release(first), false, "a stale handle cannot release the new holder")
+  assert.equal(governor.live(RESOURCE_CLASS.WRITER), 1)
+  assert.equal(governor.state().leases, 1)
+
+  // Releasing a nested handle twice must decrement depth exactly once.
+  const parent = await governor.acquire(RESOURCE_CLASS.WRITER, {
+    taskId: "parent",
+    timeoutMs: 50,
+  })
+  // The line above cannot succeed while `second` holds the only unit.
+  assert.equal(parent, null)
+  governor.release(second)
+
+  const outer = await governor.acquire(RESOURCE_CLASS.WRITER, { taskId: "outer" })
+  const inner = await governor.acquire(RESOURCE_CLASS.WRITER, { parentLease: outer })
+  assert.ok(outer && inner)
+  assert.equal(governor.release(inner), true)
+  assert.equal(governor.release(inner), false, "a nested handle releases depth once")
+  assert.equal(governor.live(RESOURCE_CLASS.WRITER), 1, "the outer unit survives the nested handle")
+  governor.release(outer)
+  assert.equal(governor.live(RESOURCE_CLASS.WRITER), 0)
+})
+
+test("H13: a timed-out waiter is removed and never admitted late", async () => {
+  const governor = createResourceGovernor({ caps: { WRITER: 1 }, defaultTimeoutMs: 25 })
+  const holder = await governor.acquire(RESOURCE_CLASS.WRITER, { taskId: "holder" })
+  assert.ok(holder)
+  let ran = false
+  const outcome = await governor.withLease(RESOURCE_CLASS.WRITER, async () => {
+    ran = true
+    return "late"
+  }, { taskId: "waiter", timeoutMs: 30 })
+  assert.equal(outcome.ok, false)
+  assert.equal(outcome.reason, "timeout")
+  assert.ok(outcome.waitedMs >= 20, `a timed-out waiter reports its real wait, got ${outcome.waitedMs}ms`)
+  assert.equal(ran, false, "timed-out work never runs")
+  assert.equal(governor.live(RESOURCE_CLASS.WRITER), 1)
+  assert.equal(governor.state().timedOut, 1)
+  assert.equal(governor.state().classes[RESOURCE_CLASS.WRITER].waiting, 0)
+  // Give any stray timer a chance to fire; capacity must still belong to holder.
+  await new Promise((resolve) => setTimeout(resolve, 60))
+  assert.equal(governor.live(RESOURCE_CLASS.WRITER), 1)
+  assert.equal(governor.state().classes[RESOURCE_CLASS.WRITER].waiting, 0)
+  governor.release(holder)
+  assert.equal(governor.live(RESOURCE_CLASS.WRITER), 0)
+})
+
+test("H14: abort removes the waiter without leaking a queue entry", async () => {
+  const governor = createResourceGovernor({ caps: { WRITER: 1 }, defaultTimeoutMs: 1_000 })
+  const holder = await governor.acquire(RESOURCE_CLASS.WRITER, { taskId: "holder" })
+  assert.ok(holder)
+  const controller = new AbortController()
+  let ran = false
+  const pending = governor.withLease(RESOURCE_CLASS.WRITER, async () => {
+    ran = true
+    return "late"
+  }, { taskId: "aborter", signal: controller.signal, timeoutMs: 1_000 })
+  // The waiter is registered synchronously before withLease yields.
+  assert.equal(governor.state().classes[RESOURCE_CLASS.WRITER].waiting, 1)
+  setTimeout(() => controller.abort(), 10)
+  const outcome = await pending
+  assert.equal(outcome.ok, false)
+  assert.equal(outcome.reason, "aborted")
+  assert.ok(outcome.waitedMs >= 5, `an aborted waiter reports its real wait, got ${outcome.waitedMs}ms`)
+  assert.equal(ran, false)
+  assert.equal(governor.live(RESOURCE_CLASS.WRITER), 1)
+  assert.equal(governor.state().aborted, 1)
+  assert.equal(governor.state().classes[RESOURCE_CLASS.WRITER].waiting, 0)
+  governor.release(holder)
+
+  // A signal that is already aborted refuses immediately, even with capacity.
+  const pre = new AbortController()
+  pre.abort()
+  const refused = await governor.withLease(RESOURCE_CLASS.WRITER, async () => "never", {
+    signal: pre.signal,
+  })
+  assert.equal(refused.ok, false)
+  assert.equal(refused.reason, "aborted")
+  assert.equal(governor.state().aborted, 2)
+  assert.equal(governor.live(RESOURCE_CLASS.WRITER), 0)
+})
+
+test("H15: an exception releases exactly once even if the body already released", async () => {
+  const governor = createResourceGovernor({ caps: { LSP: 1 } })
+  await assert.rejects(
+    () => governor.withLease(RESOURCE_CLASS.LSP, async (lease) => {
+      assert.equal(governor.release(lease), true)
+      throw new Error("body-failed")
+    }),
+    /body-failed/,
+  )
+  assert.equal(governor.live(RESOURCE_CLASS.LSP), 0, "the finally release must not double-free")
+  assert.equal(governor.state().leases, 0)
+  // If the double release had decremented twice, a later holder could share the
+  // unit or the counter would be negative. Prove the lane is clean and usable.
+  const other = await governor.acquire(RESOURCE_CLASS.LSP, { taskId: "after" })
+  assert.ok(other)
+  assert.equal(governor.live(RESOURCE_CLASS.LSP), 1)
+  governor.release(other)
+})
+
+test("H16: concurrent mixed-size acquisitions never oversubscribe and fully drain", async () => {
+  const governor = createResourceGovernor({ caps: { CPU_HEAVY: 3 }, defaultTimeoutMs: 10_000 })
+  let peakObserved = 0
+  const jobs = Array.from({ length: 40 }, (_, index) => governor.withLease(
+    RESOURCE_CLASS.CPU_HEAVY,
+    async () => {
+      peakObserved = Math.max(peakObserved, governor.live(RESOURCE_CLASS.CPU_HEAVY))
+      await new Promise((resolve) => setTimeout(resolve, (index % 4) + 1))
+      return index
+    },
+    { taskId: `stress-${index}`, units: index % 3 === 0 ? 2 : 1, timeoutMs: 10_000 },
+  ))
+  const results = await Promise.all(jobs)
+  assert.equal(results.filter((row) => row.ok).length, 40, "every job must eventually run")
+  assert.ok(peakObserved <= 3, `observed ${peakObserved} units above the cap`)
+  assert.equal(governor.live(RESOURCE_CLASS.CPU_HEAVY), 0)
+  assert.equal(governor.state().leases, 0)
+  assert.equal(governor.state().classes[RESOURCE_CLASS.CPU_HEAVY].waiting, 0)
+  assert.ok(governor.state().admitted >= 40)
+  assert.ok(
+    governor.state().classes[RESOURCE_CLASS.CPU_HEAVY].peak <= 3,
+    "the recorded peak is units, bounded by the cap",
+  )
+})
+
+test("H17: governor metrics are finite, non-negative and internally consistent", async () => {
+  const governor = createResourceGovernor({ caps: { WRITER: 1, LSP: 2 }, defaultTimeoutMs: 20 })
+  const controller = new AbortController()
+  const holder = await governor.acquire(RESOURCE_CLASS.WRITER, { taskId: "holder" })
+  const waiter = governor.withLease(RESOURCE_CLASS.WRITER, async () => "never", {
+    timeoutMs: 20,
+  })
+  const aborter = governor.withLease(RESOURCE_CLASS.WRITER, async () => "never", {
+    signal: controller.signal,
+    timeoutMs: 1_000,
+  })
+  setTimeout(() => controller.abort(), 5)
+  await waiter
+  await aborter
+  governor.release(holder)
+  const state = governor.state()
+  for (const key of ["admitted", "reentries", "refused", "timedOut", "aborted", "peakWaiters", "waitMsTotal", "unitsAdmitted", "leases", "units"]) {
+    assert.ok(Number.isFinite(state[key]), `${key} must be a finite number`)
+    assert.ok(state[key] >= 0, `${key} must be non-negative, got ${state[key]}`)
+  }
+  for (const [cls, row] of Object.entries(state.classes)) {
+    for (const key of ["cap", "live", "units", "leases", "waiting", "peak", "headroom"]) {
+      assert.ok(Number.isFinite(row[key]) && row[key] >= 0, `${cls}.${key} must be finite and non-negative`)
+    }
+    assert.ok(row.live <= row.cap, `${cls} live units may never exceed its cap`)
+    assert.equal(row.live, row.units)
+    assert.equal(row.headroom, row.cap - row.live)
+    assert.equal(row.waiting, 0)
+  }
+  assert.equal(state.leases, 0)
+  assert.equal(state.units, 0)
 })
 
 // ===========================================================================

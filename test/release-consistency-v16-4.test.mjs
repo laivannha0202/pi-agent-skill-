@@ -23,6 +23,9 @@ async function writeValidTree(write, version) {
   const pkg = {
     version,
     bin: { ues: "bin/ocskill.mjs", ocskill: "bin/ocskill.mjs" },
+    repository: { type: "git", url: "git+https://github.com/laivannha0202/pi-agent-skill-.git" },
+    homepage: "https://github.com/laivannha0202/pi-agent-skill-#readme",
+    bugs: { url: "https://github.com/laivannha0202/pi-agent-skill-/issues" },
     scripts: {
       test: "node scripts/run-test-suite.mjs",
       "test:pi": "node scripts/run-test-suite.mjs --concurrency=1 --timeout-ms=90000 test/pi-package.test.mjs",
@@ -32,7 +35,9 @@ async function writeValidTree(write, version) {
       "eval:pi": "node scripts/eval-pi.mjs",
       eval: "node scripts/eval-pi.mjs",
       "eval:v15": "node scripts/run-test-suite.mjs --concurrency=4 --timeout-ms=90000 test/v15-runtime.test.mjs test/trajectory.test.mjs test/evidence-store-v11.test.mjs test/runtime-events.test.mjs test/v14.3-intelligence.test.mjs test/v14.2-runtime.test.mjs test/pi-package.test.mjs test/execution-contract.test.mjs",
-      ci: "npm run integrity && npm run runtime:exports && npm run syntax && npm test && npm run docs:check && npm pack --dry-run && npm run smoke:pi && npm run smoke:package && npm run smoke:packed && npm run accept:fresh-pi",
+      "syntax": "node scripts/syntax-check.mjs",
+      "typecheck:pi": "tsc -p tsconfig.typecheck.json",
+      ci: "npm run integrity && npm run runtime:exports && npm run syntax && npm run typecheck:pi && npm test && npm run docs:check && npm pack --dry-run && npm run smoke:pi && npm run smoke:package && npm run smoke:packed && npm run accept:fresh-pi",
       integrity: "node scripts/check-source-integrity.mjs",
       "runtime:exports": "node scripts/check-runtime-exports.mjs",
       "smoke:packed": "node scripts/smoke-packed-install.mjs",
@@ -90,7 +95,7 @@ async function writeValidTree(write, version) {
   await write("package.json", JSON.stringify(pkg));
   await write("package-lock.json", JSON.stringify(lock));
   await write("README.md", `<!-- ues-version: ${version} -->
-Pi Agent npm install -g opencode-agent-skill pi package add opencode-agent-skill ues version ues doctor ues status ues trial docs/PI-COMPAT.md npm run eval:v16.5
+Pi Agent npm install -g opencode-agent-skill pi install npm:opencode-agent-skill ues version ues doctor ues status ues trial docs/PI-COMPAT.md npm run eval:v16.5
 ## What is UES?
 ## Why UES?
 ## Highlights
@@ -106,8 +111,9 @@ Pi Agent npm install -g opencode-agent-skill pi package add opencode-agent-skill
   await write("CHANGELOG.md", `# Changelog\n\n## [${version}] - 2026-10-04\n\nnotes\n\n## [16.0.0] - 2026-10-02\n\nnotes\n`);
   await write("evals/routing.json", JSON.stringify({ scenarios: [] }));
   await write("evals/router-triggers.json", JSON.stringify({ cases: [] }));
-  const piCompatMarkers = ["# Pi Agent runtime", "Current package runtime:** 16.0.0", "V16 Deterministic Trust & Correctness Hardening", "V15.9 Adaptive Agent Intelligence", "ues_execute", "ues_dispatch", "ues_cli", "manifest is Pi-only", "V14.2 Turbo Weak-Model Runtime", "V15.1 deterministic admission and managed services", "V15.2 Turbo Fast Path", "V15.3 DEEP Speed", "V15.4 ACP-safe child runtime", "V15.5 Per-Leaf Turbo", "V15.6 Fast Planning", "V15.7 Lightweight Sandbox Cleanup", "V15.8 Measured Hardening", "V15.8 Plan Gate Recovery", "V15.9 Runtime Artifact Isolation", "V15.10 Adaptive Stability Runtime", "V15.11 Session Identity Sync", "V15.12 Safe Autopilot + Disk Hygiene", "V15.13 Read-Only Completion Semantics", "V15.14 Deterministic Read-Only Fast Path", "V15.15 Execution Contracts + Phase Gates", "V15.16 Portable Cross-Tool Temp Paths", "V15.17 Zero-Friction Autopilot Admission", "V15.18 Three-Tier Zero-Friction Routing", "V15.19 Finalization Hardening", "ues_service"];
+  const piCompatMarkers = [`<!-- ues-version: ${version} -->`, "# Pi Agent runtime", "V16.18 Adaptive Full-Power Optimization", "V16 Deterministic Trust & Correctness Hardening", "V15.9 Adaptive Agent Intelligence", "ues_execute", "ues_dispatch", "ues_cli", "manifest is Pi-only", "V14.2 Turbo Weak-Model Runtime", "V15.1 deterministic admission and managed services", "V15.2 Turbo Fast Path", "V15.3 DEEP Speed", "V15.4 ACP-safe child runtime", "V15.5 Per-Leaf Turbo", "V15.6 Fast Planning", "V15.7 Lightweight Sandbox Cleanup", "V15.8 Measured Hardening", "V15.8 Plan Gate Recovery", "V15.9 Runtime Artifact Isolation", "V15.10 Adaptive Stability Runtime", "V15.11 Session Identity Sync", "V15.12 Safe Autopilot + Disk Hygiene", "V15.13 Read-Only Completion Semantics", "V15.14 Deterministic Read-Only Fast Path", "V15.15 Execution Contracts + Phase Gates", "V15.16 Portable Cross-Tool Temp Paths", "V15.17 Zero-Friction Autopilot Admission", "V15.18 Three-Tier Zero-Friction Routing", "V15.19 Finalization Hardening", "ues_service"];
   await write("docs/PI-COMPAT.md", piCompatMarkers.join("\n"));
+  await write("docs/NPM-PUBLISH.md", "# Publishing to npm\nopencode-agent-skill\npi install npm:opencode-agent-skill\nnpm publish --access public\nrelease:check-tag\n<version>\n");
   await write("docs/OPENCODE-COMPAT.md", "Deprecated compatibility surface\nsupported runtime in this repository is **Pi Agent**\ncanonical runtime lives under `pi/` and `lib/`\ncompatibility shim");
   await write("lib/orchestrator-policy.mjs", `import { x } from "./task-policy.mjs";\nexport const y = x;\n`);
   await write("global-config/plugins/ues-router/policy-runtime.js", `import { x } from "../../../lib/task-policy.mjs";\nexport const y = x;\n`);

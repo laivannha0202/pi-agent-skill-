@@ -1,7 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
-import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } from "node:fs"
+import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync, realpathSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import {
@@ -69,7 +69,10 @@ test("V16.8 workspace root is accepted only with contained existing grounded fil
   const root = fixture()
   try {
     const resolved = resolveBarrierWorkspaceRoot({ knownFiles: ["src/core.mjs"] }, { workspaceRoot: root })
-    assert.equal(resolved.root, root)
+    // The barrier canonicalises the root (realpath) so a symlinked or 8.3 short
+    // Windows temp path cannot be used to escape containment. Assert the
+    // canonical identity, not the literal mkdtemp spelling.
+    assert.equal(path.resolve(resolved.root), realpathSync.native(root))
     assert.equal(resolved.required, true)
     const escaped = resolveBarrierWorkspaceRoot({ knownFiles: ["../outside.mjs"] }, { workspaceRoot: root })
     assert.equal(escaped.root, null)

@@ -1,6 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises"
+import { realpathSync } from "node:fs"
 import { spawnSync } from "node:child_process"
 import os from "node:os"
 import path from "node:path"
@@ -16,6 +17,23 @@ function git(root, args) {
   const result = spawnSync("git", args, { cwd: root, encoding: "utf8" })
   assert.equal(result.status, 0, result.stderr || result.stdout)
   return result.stdout.trim()
+}
+
+// The cleanup owner returns canonical long paths even when the temp directory
+// was created under an 8.3 short spelling. Compare canonical identities.
+function canonical(value) {
+  const resolved = path.resolve(String(value || ""))
+  try {
+    return realpathSync.native(resolved)
+  } catch {
+    // The cleanup may already have removed the target. Canonicalise the parent
+    // so an 8.3 short temp spelling still compares equal to the long report.
+    try {
+      return path.join(realpathSync.native(path.dirname(resolved)), path.basename(resolved))
+    } catch {
+      return resolved
+    }
+  }
 }
 
 test("sandbox integration applies isolated changes and cleans worktree", async () => {
@@ -316,7 +334,7 @@ test("V15.7 cleanup removes orphan metadata sidecars for missing sandboxes", asy
       minAgeMs: 60_000,
       legacyMinAgeMs: 60_000,
     })
-    assert.equal(cleanup.sidecarsRemoved.includes(sidecar), true)
+    assert.equal(cleanup.sidecarsRemoved.map(canonical).includes(canonical(sidecar)), true)
   } finally {
     await rm(root, { recursive: true, force: true })
     await rm(base, { recursive: true, force: true })
@@ -350,7 +368,7 @@ test("V15.8 cleanup removes detached physical sandbox folders with valid metadat
       legacyMinAgeMs: 60_000,
     })
 
-    assert.equal(cleanup.removed.some((item) => path.resolve(item.dir) === path.resolve(detachedDir) && item.detached === true), true)
+    assert.equal(cleanup.removed.some((item) => canonical(item.dir) === canonical(detachedDir) && item.detached === true), true)
     await assert.rejects(readFile(path.join(detachedDir, "payload.txt"), "utf8"), /ENOENT/)
   } finally {
     await rm(root, { recursive: true, force: true })

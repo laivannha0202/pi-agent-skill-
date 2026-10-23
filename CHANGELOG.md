@@ -2,6 +2,57 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Resource governor (V16.18): per-acquisition handles are separated from lease
+  records, `live()` counts units, anonymous acquisitions receive unique IDs,
+  re-entrancy requires a live parent handle, invalid caps/units are rejected,
+  the clock is monotonic, release is idempotent and stale-safe, deadline is
+  rechecked before admission, all waiters are woken on release, and metrics
+  count only what the governor actually observed.
+- Shell safety: Git global options are parsed before subcommand/verb detection;
+  POSIX, Windows and PowerShell wrappers (including encoded commands and process
+  substitution), chaining, command substitution, quoting, environment prefixes
+  and path normalization are unwrapped before classification. SQL detection is
+  limited to SQL clients and statement position so documentation text no longer
+  triggers false positives.
+- Permission policy: role/agent layers are monotonic overlays that may narrow but
+  never widen the repository/default-deny baseline; the explicit user layer keeps
+  its override authority.
+- Cross-platform scripts: `eval:v16.5` and `eval:v16.6` no longer depend on
+  `/dev/null`. `scripts/run-quiet.mjs` suppresses stdout without a shell and
+  preserves stderr and the exact child exit code.
+- Release documentation: the canonical repository URL is
+  `laivannha0202/pi-agent-skill-`; Pi installation uses
+  `pi install npm:opencode-agent-skill`; `docs/PI-COMPAT.md` reports the current
+  runtime version; `docs/NPM-PUBLISH.md` is version-agnostic; the release checker
+  derives the expected version from `package.json` and rejects stale install
+  syntax, stale repository URLs, runtime-version drift, and hardcoded release
+  versions.
+- TypeScript gate: `npm run typecheck:pi` now typechecks the Pi extension
+  semantically against the Pi SDK and TypeBox declarations and is part of
+  `npm run ci`. The gate found and this change fixes a real out-of-scope
+  `wavePlanModule` reference in a recovery path, a `repoMapStats().selected`
+  field that does not exist (the runtime reports `selectedCount`), a duplicate
+  object key, and an under-declared `RunResult` union that hid missing
+  `stopReason`/`report`/`modelTier` fields from callers.
+- V16.18 LIGHT_CONTEXT quality escalation: `lightContextInsufficient()` read a
+  non-existent `recall` field, so the documented "context quality below
+  threshold" escalation was a silent no-op. It now reads the measured
+  `requiredFileRecall` and the quality owner's explicit verdict, including a
+  measured zero, and escalates to FULL_CONTEXT. Pinned by test D6.
+- V16.18 command-only read-only runs: a `MUST_NOT` requirement (for example
+  "Do not modify files") no longer diverts an explicitly whitelisted Git
+  inspection to a model verifier. The deterministic read-only route opts into
+  the read-only invariant, which runs only whitelisted Git commands and proves
+  the workspace fingerprint is unchanged. `VERIFY` requirements still keep the
+  explicit verifier, and the post-implementation FAST gate stays conservative.
+- V16.18 resource-governor metrics: refused, timed-out and aborted acquisitions
+  now report their real `waitedMs` instead of `0`.
+- Pi browser tests: the history-detector fixture launches Microsoft Edge once
+  and opens a fresh context per test, so the file runs in ~4s instead of
+  exceeding the bounded runner's 45s per-file hang bound.
+
 ## [16.18.0] - 2026-10-11
 
 ### Added

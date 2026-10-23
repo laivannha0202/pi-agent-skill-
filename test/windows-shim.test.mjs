@@ -114,6 +114,37 @@ test("Windows shim resolver accepts an explicit native package bin target", asyn
 })
 
 
+test("Windows shim resolver finds local node_modules/.bin package installs", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "ues-win-local-bin-"))
+  try {
+    const packageDir = path.join(root, "node_modules", "typescript-language-server")
+    const entry = path.join(packageDir, "lib", "cli.mjs")
+    await mkdir(path.dirname(entry), { recursive: true })
+    await writeFile(
+      path.join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "typescript-language-server",
+        version: "6.0.2",
+        type: "module",
+        bin: { "typescript-language-server": "lib/cli.mjs" },
+      }),
+    )
+    await writeFile(entry, "#!/usr/bin/env node\nconsole.log('language server')\n")
+
+    // npm's local shim lives one level below the package tree and on Windows it
+    // has no symlinked package directory in `.bin`. Resolution must inspect the
+    // parent `node_modules`, not `.bin/node_modules`.
+    const shim = path.join(root, "node_modules", ".bin", "typescript-language-server.cmd")
+    await mkdir(path.dirname(shim), { recursive: true })
+    await writeFile(shim, "@ECHO off\r\nREM non-standard local shim text\r\n")
+
+    assert.equal(resolveNodeShimEntry(shim), entry)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+
 test("Windows resolver finds installer-managed Pi releases", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "ues-managed-pi-"))
   try {

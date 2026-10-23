@@ -34,7 +34,7 @@ New installs should use Pi:
 
 ```cmd
 npm install -g @earendil-works/pi-coding-agent
-pi install git:github.com/laivannha0202/opencode-agent-skill-
+pi install git:github.com/laivannha0202/pi-agent-skill-
 pi
 ```
 

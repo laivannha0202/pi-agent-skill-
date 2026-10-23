@@ -232,7 +232,9 @@ function registerBuiltInExecutionModes(pi: ExtensionAPI) {
     { tool: createWriteToolDefinition(cwd), executionMode: "sequential" as const },
   ];
   for (const entry of definitions) {
-    pi.registerTool({ ...entry.tool, executionMode: entry.executionMode });
+    // Each built-in definition carries a different parameter/details generic;
+    // the registration boundary is the only place that erases it.
+    pi.registerTool({ ...entry.tool, executionMode: entry.executionMode } as any);
   }
 }
 

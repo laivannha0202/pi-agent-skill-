@@ -17,5 +17,14 @@ Thumbs.db
 # npm pack artifacts
 opencode-agent-skill-*.tgz
 
-# transient type-strip probes used only by bounded regression tests
-pi/extensions/__v1671_*_probe_*.mjs
+# transient type-strip probes used only by bounded regression tests.
+# Every probe file lives in pi/extensions/ (so relative ../../lib imports resolve)
+# but must NEVER appear in git status: a concurrent suite sibling writing its own
+# probe mid-run would otherwise trip the read-only post-run hygiene guard
+# (read-only-agent-mutation) in an unrelated test's verifier child.
+# V16.18: one prefix covers ALL versions (v164/v165/v1610/v1671/v1617/smoke/...);
+# no tracked source file uses a __ prefix, so this cannot hide real source.
+pi/extensions/__*.mjs
+
+# Playwright MCP cache/snapshots
+.playwright-mcp/

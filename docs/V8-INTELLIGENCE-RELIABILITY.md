@@ -193,7 +193,7 @@ V8 adds:
 - fail-closed tag/version guard;
 - exact plain global-install compatibility smoke in addition to packed-install smoke.
 
-Trusted Publishing still requires the npm account-side trust relationship to be configured for `laivannha0202/opencode-agent-skill-` and `publish.yml`.
+GitHub Actions publishing (including `publish.yml`) is intentionally disabled in this repository. Releases are manual/local, as documented in [NPM-PUBLISH](./NPM-PUBLISH.md). If trusted publishing is configured later, the npm account-side trust relationship must target the canonical repository `laivannha0202/pi-agent-skill-`.
 
 ## Validation before release
 

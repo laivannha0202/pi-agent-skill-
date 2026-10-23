@@ -28,7 +28,8 @@ test("README: answers what/why/how-to-start in the documented order", () => {
   const quickStart = readme.slice(positions[4], readme.indexOf("## How It Works"));
   assert.ok(quickStart.includes("npm install -g opencode-agent-skill"), "install command must be in Quick Start");
   assert.ok(quickStart.includes("ues version"), "verify command must be in Quick Start");
-  assert.ok(quickStart.includes("pi package add opencode-agent-skill"));
+  assert.ok(quickStart.includes("pi install npm:opencode-agent-skill"));
+  assert.ok(!quickStart.includes("pi package add"), "Quick Start must use the official Pi install syntax");
   assert.ok(quickStart.includes("Node.js **>= 22.19**"));
 });
 
@@ -103,7 +104,8 @@ test("README: install and verify commands are correct", () => {
   assert.ok(readme.includes("Node.js **>= 22.19**") || readme.includes(">= 22.19"));
   assert.ok(readme.includes("ues version"));
   assert.ok(readme.includes("ues doctor --reasoning"));
-  assert.ok(readme.includes("pi package add opencode-agent-skill"));
+  assert.ok(readme.includes("pi install npm:opencode-agent-skill"));
+  assert.ok(!readme.includes("pi package add"), "README must not document the deprecated Pi install syntax");
   for (const command of ["ues status", "ues optimize-report", "ues trial", "npm run eval:v16.5"]) {
     assert.ok(readme.includes(command), `README must document ${command}`);
   }

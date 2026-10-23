@@ -42,7 +42,7 @@ export const COORDINATED_EVALS = [
 
 /**
  * Behaviour-specific NON-test steps carried by a few eval commands
- * (`&& node scripts/eval-*.mjs > /dev/null`). The coordinator runs the shared
+ * (`&& node scripts/run-quiet.mjs node scripts/eval-*.mjs`). The coordinator runs the shared
  * test union ONCE and then re-executes exactly these steps, so no
  * behaviour-specific eval is lost. Anything unparseable is refused.
  */

@@ -49,6 +49,17 @@ function requireText(errors, result, relative) {
   return ""
 }
 
+function normalizeRepositoryUrl(value) {
+  return String(value || "")
+    .trim()
+    .replace(/^git\+/, "")
+    .replace(/\.git$/, "")
+    .replace(/\/$/, "")
+}
+
+const CANONICAL_REPOSITORY = "https://github.com/laivannha0202/pi-agent-skill-"
+const STALE_REPOSITORY = "github.com/laivannha0202/opencode-agent-skill-"
+
 export function checkReleaseConsistency(root = DEFAULT_ROOT) {
   const errors = []
   const warnings = []
@@ -74,6 +85,16 @@ export function checkReleaseConsistency(root = DEFAULT_ROOT) {
       if (pkg.bin?.[name] !== target) errors.push(`package.json: bin.${name} must be ${target}`)
       if (lock?.packages?.[""]?.bin?.[name] !== target) {
         errors.push(`package-lock.json: root bin.${name} must be ${target}`)
+      }
+    }
+    const repository = normalizeRepositoryUrl(pkg.repository?.url)
+    if (repository !== CANONICAL_REPOSITORY) {
+      errors.push(`package.json: repository.url must be ${CANONICAL_REPOSITORY} (found ${repository || "missing"})`)
+    }
+    for (const field of ["homepage", "bugs"]) {
+      const value = normalizeRepositoryUrl(field === "bugs" ? pkg.bugs?.url : pkg[field])
+      if (!value.startsWith(CANONICAL_REPOSITORY)) {
+        errors.push(`package.json: ${field} must point at ${CANONICAL_REPOSITORY}`)
       }
     }
   }
@@ -116,8 +137,11 @@ export function checkReleaseConsistency(root = DEFAULT_ROOT) {
     // Pi runtime surface markers that must stay documented. The Pi-side command
     // contract (ues_execute / ues_dispatch / ues_cli) is asserted against
     // docs/PI-COMPAT.md below; the landing page only has to link that contract.
-    for (const marker of ["Pi Agent", "npm install -g opencode-agent-skill", "pi package add opencode-agent-skill", "ues version", "ues doctor", "ues status", "ues trial", "docs/PI-COMPAT.md", "npm run eval:v16.5"]) {
+    for (const marker of ["Pi Agent", "npm install -g opencode-agent-skill", "pi install npm:opencode-agent-skill", "ues version", "ues doctor", "ues status", "ues trial", "docs/PI-COMPAT.md", "npm run eval:v16.5"]) {
       if (!readme.includes(marker)) errors.push(`README.md: missing Pi runtime marker ${marker}`)
+    }
+    if (/\bpi\s+package\s+add\b/i.test(readme)) {
+      errors.push("README.md: deprecated install syntax `pi package add`; use `pi install npm:opencode-agent-skill`")
     }
     // Anti-bloat gate: the landing page must stay a landing page.
     const readmeLines = readme.split(/\r?\n/).length
@@ -140,13 +164,16 @@ export function checkReleaseConsistency(root = DEFAULT_ROOT) {
   if (lock && lock.version !== version) {
     errors.push(`package-lock.json version (${lock.version}) != package.json version (${version})`)
   }
-  if (changelog && !changelog.includes("## [16.0.0] - 2026-10-02")) {
-    errors.push("CHANGELOG.md: missing V16.0.0 release entry")
-  }
 
   const piCompat = requireText(errors, readText(root, path.join("docs", "PI-COMPAT.md")), "docs/PI-COMPAT.md")
   if (piCompat) {
-    for (const marker of ["# Pi Agent runtime", "Current package runtime:** 16.0.0", "V16 Deterministic Trust & Correctness Hardening", "V15.9 Adaptive Agent Intelligence", "ues_execute", "ues_dispatch", "ues_cli", "manifest is Pi-only", "V14.2 Turbo Weak-Model Runtime", "V15.1 deterministic admission and managed services", "V15.2 Turbo Fast Path", "V15.3 DEEP Speed", "V15.4 ACP-safe child runtime", "V15.5 Per-Leaf Turbo", "V15.6 Fast Planning", "V15.7 Lightweight Sandbox Cleanup", "V15.8 Measured Hardening", "V15.8 Plan Gate Recovery", "V15.9 Runtime Artifact Isolation", "V15.10 Adaptive Stability Runtime", "V15.11 Session Identity Sync", "V15.12 Safe Autopilot + Disk Hygiene", "V15.13 Read-Only Completion Semantics", "V15.14 Deterministic Read-Only Fast Path", "V15.15 Execution Contracts + Phase Gates", "V15.16 Portable Cross-Tool Temp Paths", "V15.17 Zero-Friction Autopilot Admission", "V15.18 Three-Tier Zero-Friction Routing", "V15.19 Finalization Hardening", "ues_service"]) {
+    const piCompatVersion = piCompat.match(/<!--\s*ues-version:\s*([^\s>]+)\s*-->/i)?.[1] || null
+    if (!piCompatVersion) {
+      errors.push("docs/PI-COMPAT.md: could not find the machine-readable runtime version marker (<!-- ues-version: X.Y.Z -->)")
+    } else if (piCompatVersion !== version) {
+      errors.push(`docs/PI-COMPAT.md: current runtime says ${piCompatVersion}, expected ${version}`)
+    }
+    for (const marker of ["# Pi Agent runtime", "V16.18 Adaptive Full-Power Optimization", "V16 Deterministic Trust & Correctness Hardening", "V15.9 Adaptive Agent Intelligence", "ues_execute", "ues_dispatch", "ues_cli", "manifest is Pi-only", "V14.2 Turbo Weak-Model Runtime", "V15.1 deterministic admission and managed services", "V15.2 Turbo Fast Path", "V15.3 DEEP Speed", "V15.4 ACP-safe child runtime", "V15.5 Per-Leaf Turbo", "V15.6 Fast Planning", "V15.7 Lightweight Sandbox Cleanup", "V15.8 Measured Hardening", "V15.8 Plan Gate Recovery", "V15.9 Runtime Artifact Isolation", "V15.10 Adaptive Stability Runtime", "V15.11 Session Identity Sync", "V15.12 Safe Autopilot + Disk Hygiene", "V15.13 Read-Only Completion Semantics", "V15.14 Deterministic Read-Only Fast Path", "V15.15 Execution Contracts + Phase Gates", "V15.16 Portable Cross-Tool Temp Paths", "V15.17 Zero-Friction Autopilot Admission", "V15.18 Three-Tier Zero-Friction Routing", "V15.19 Finalization Hardening", "ues_service"]) {
       if (!piCompat.includes(marker)) errors.push(`docs/PI-COMPAT.md: missing current Pi contract marker ${marker}`)
     }
   }
@@ -156,6 +183,24 @@ export function checkReleaseConsistency(root = DEFAULT_ROOT) {
     for (const marker of ["Deprecated compatibility surface", "supported runtime in this repository is **Pi Agent**", "canonical runtime lives under `pi/` and `lib/`", "compatibility shim"]) {
       if (!openCodeCompat.includes(marker)) errors.push(`docs/OPENCODE-COMPAT.md: missing legacy-boundary marker ${marker}`)
     }
+  }
+
+  const npmPublish = requireText(errors, readText(root, path.join("docs", "NPM-PUBLISH.md")), "docs/NPM-PUBLISH.md")
+  if (npmPublish) {
+    for (const marker of ["opencode-agent-skill", "pi install npm:opencode-agent-skill", "npm publish --access public", "release:check-tag", "<version>"]) {
+      if (!npmPublish.includes(marker)) errors.push(`docs/NPM-PUBLISH.md: missing release-contract marker ${marker}`)
+    }
+    if (/\b\d+\.\d+\.\d+\b/.test(npmPublish)) {
+      errors.push("docs/NPM-PUBLISH.md: must derive the release version from package.json; literal X.Y.Z versions are not allowed in the release guide")
+    }
+  }
+
+  // The repository was renamed. The old path still redirects on GitHub, but a
+  // redirect must not become the documented canonical location.
+  for (const relative of ["README.md", "CONTRIBUTING.md", path.join("docs", "PI-COMPAT.md"), path.join("docs", "OPENCODE-COMPAT.md"), path.join("docs", "NPM-PUBLISH.md")]) {
+    const text = relative === "README.md" ? readme : readText(root, relative)
+    const value = typeof text === "string" ? text : text.ok ? text.value : ""
+    if (value.includes(STALE_REPOSITORY)) errors.push(`${relative}: stale repository URL ${STALE_REPOSITORY}`)
   }
 
   const orchestrator = requireText(errors, readText(root, path.join("lib", "orchestrator-policy.mjs")), "lib/orchestrator-policy.mjs")
@@ -213,6 +258,8 @@ export function checkReleaseConsistency(root = DEFAULT_ROOT) {
     if (!String(scripts.ci || "").includes("npm run integrity")) errors.push("package.json: ci must include source-integrity gate")
     if (scripts["runtime:exports"] !== "node scripts/check-runtime-exports.mjs") errors.push("package.json: missing runtime:exports import/export gate")
     if (!String(scripts.ci || "").includes("npm run runtime:exports")) errors.push("package.json: ci must include runtime export gate")
+    if (scripts["typecheck:pi"] !== "tsc -p tsconfig.typecheck.json") errors.push("package.json: missing semantic Pi TypeScript typecheck gate")
+    if (!String(scripts.ci || "").includes("npm run typecheck:pi")) errors.push("package.json: ci must include the semantic TypeScript typecheck gate")
     if (!String(scripts.ci || "").includes("npm run docs:check")) errors.push("package.json: ci must include docs:check")
     if (!String(scripts.ci || "").includes("npm test")) errors.push("package.json: ci must include full npm test")
     if (!String(scripts.ci || "").includes("npm run smoke:packed")) errors.push("package.json: ci must include smoke:packed")

@@ -2,15 +2,15 @@
 
 ## Requirements
 
-- Node.js 20+
+- Node.js 22.19+
 - npm
 - Git
 
 ## Development
 
 ```bash
-git clone https://github.com/laivannha0202/opencode-agent-skill-.git
-cd opencode-agent-skill-
+git clone https://github.com/laivannha0202/pi-agent-skill-.git
+cd pi-agent-skill-
 npm install
 npm run ci
 ```
@@ -47,12 +47,22 @@ npm run evals
 
 The routing suite is a static catalog contract, not a model-quality benchmark.
 
+## Semantic TypeScript gate
+
+The Pi extension is authored in TypeScript but executes from source. Run the semantic gate before sending changes:
+
+```bash
+npm run typecheck:pi
+```
+
+It typechecks `pi/extensions/**/*.ts` against the installed Pi SDK and TypeBox declarations. Runtime `.mjs` modules are intentionally outside this gate: they are plain JavaScript with no checked declarations, so the gate would otherwise report unsound false positives. `npm run ci` runs this gate before the test suite.
+
 ## Before committing
 
 ```bash
 npm run ci
 ```
 
-This validates skills/commands/subagents and local references, validates routing scenarios, runs Node tests, and checks the npm tarball.
+This validates skills/commands/subagents and local references, validates routing scenarios, typechecks the Pi extension, runs Node tests, and checks the npm tarball.
 
 Update `CHANGELOG.md` whenever package behavior changes.

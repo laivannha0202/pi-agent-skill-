@@ -92,7 +92,7 @@ produce a verdict.
 ### Requirements
 
 - Node.js **>= 22.19**
-- [Pi Agent](https://pi.dev) 0.84+
+- [Pi Agent](https://pi.dev) 1.4.0+ (tested with 1.4.0)
 
 ### Install
 
@@ -103,7 +103,7 @@ npm install -g opencode-agent-skill
 Then register the package with Pi:
 
 ```bash
-pi package add opencode-agent-skill
+pi install npm:opencode-agent-skill
 ```
 
 ### Verify
@@ -369,6 +369,12 @@ docs/    design, compatibility, evaluation, and release documentation
 | Context intelligence + economy | [V16.10](./docs/V16.10-CONTEXT-INTELLIGENCE-ECONOMY.md) |
 | Advisor lifecycle + event-first | [V16.11](./docs/V16.11-ADVISOR-LIFECYCLE-EVENT-FIRST.md) |
 | Execution acceleration runtime | [V16.12](./docs/V16.12-EXECUTION-ACCELERATION-RUNTIME.md) |
+| External research intelligence | [V16.13](./docs/V16.13-EXTERNAL-RESEARCH-INTELLIGENCE.md) |
+| Token economy | [V16.14](./docs/V16.14-ULTRA-FAST-TOKEN-ECONOMY.md) |
+| Parallel coding runtime | [V16.15](./docs/V16.15-SINGLE-SHOT-PARALLEL-CODING.md) |
+| Critical-path execution | [V16.16](./docs/V16.16-CRITICAL-PATH-EXECUTION-COST-RUNTIME.md) |
+| Execution-core consolidation | [V16.17](./docs/V16.17-EXECUTION-CORE-CONSOLIDATION.md) |
+| Adaptive full-power optimization | [V16.18](./docs/V16.18-ADAPTIVE-FULL-POWER-OPTIMIZATION.md) |
 | Evaluations | [EVALS](./docs/EVALS.md) |
 | Deterministic tools | [DETERMINISTIC-TOOLS](./docs/DETERMINISTIC-TOOLS.md) |
 | Trace schema | [TRACE-SCHEMA](./docs/TRACE-SCHEMA.md) |

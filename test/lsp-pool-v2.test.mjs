@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
+import { mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -318,7 +318,7 @@ test("LSP V2 applies global LRU eviction instead of growing without bound", asyn
 
     const status = lspPoolStatus({ maxServers: 1 })
     assert.equal(status.active, 1)
-    assert.equal(status.sessions[0].workspace, right)
+    assert.equal(status.sessions[0].workspace, await realpath(right))
     assert.ok(status.metrics.evictions >= 1)
   } finally {
     await shutdownLspPool()

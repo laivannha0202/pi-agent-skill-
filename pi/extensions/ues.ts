@@ -1414,7 +1414,7 @@ export function buildWebReasoningAdapterDeps(worker: any) {
   }
   const countingDomInspect = async (options: any) => {
     const mode = String(options?.mode || "composer-vicinity");
-    return worker.domInspect({ mode: "composer-vicinity", ...(options || {}), mode });
+    return worker.domInspect({ ...(options || {}), mode });
   };
   return {
     capability: {
@@ -1736,6 +1736,7 @@ type RunResult = {
   stopReason?: string;
   errorMessage?: string;
   modelTier?: string;
+  webReasoning?: any;
   modelSelection?: any;
   taskPolicy?: any;
   contextQuality?: any;
@@ -4460,7 +4461,7 @@ async function runRoutedAgent(
   // it never spawns a process (the Pi child spawn below remains the only one).
   const delegationDecision = decideDelegation({
     task,
-    requestedRole: Object.entries(DELEGATION_ROLES).find(([, spec]) => spec.agent === agent)?.[0] || null,
+    requestedRole: Object.entries(DELEGATION_ROLES).find(([, spec]: [string, any]) => spec?.agent === agent)?.[0] || null,
     repoEvidence: workspaceState.changedFiles || [],
   });
   const delegationSession = createDelegationSession({
@@ -4470,7 +4471,7 @@ async function runRoutedAgent(
   });
   const progressObserver = createProgressObserver({ phase: "delegation" });
   const childRegistration = registerChild(delegationSession, {
-    role: Object.entries(DELEGATION_ROLES).find(([, spec]) => spec.agent === agent)?.[0] || "explore",
+    role: Object.entries(DELEGATION_ROLES).find(([, spec]: [string, any]) => spec?.agent === agent)?.[0] || "explore",
     agent,
     readOnly: !WRITE_AGENTS.has(agent),
     task,
@@ -5535,7 +5536,7 @@ async function predictStructuredPrewarmIdentity(input: {
       systemPromptHash: rpcPromptHash(agent),
       env: childEnv,
     });
-    return { key: prepared.key, spec: prepared.spec, prepared };
+    return { key: prepared.key, spec: prepared.spec };
   } catch {
     return null;
   }
@@ -7374,7 +7375,7 @@ export async function executeStructuredPlan(input: {
                 .filter(Boolean);
               const proofPlan = wavePlanModule.planProofReuse({
                 candidates,
-                finalRelease: input.finalRelease === true,
+                finalRelease: (input as any).finalRelease === true,
                 requireFreshCommands: securityFresh,
               });
               // V16.16 proof execution: the partition MUST change verification
@@ -7667,7 +7668,7 @@ export async function executeStructuredPlan(input: {
           // exactly, and only the progress owner is consulted: a provably
           // non-advancing infrastructure loop stops instead of respawning the
           // same wave against the same inputs.
-          const progress = observeWaveState(wavePlanModule, waveStateFingerprint(ids, lastWaveFailure));
+          const progress = observeWaveState(wavePlanModuleForCompile, waveStateFingerprint(ids, lastWaveFailure));
           const stalled = progress ? progress.continue === false : false;
           parallelCodingTelemetry.retries.push({
             wave: waveIndex,
@@ -8777,6 +8778,7 @@ export default function (pi: ExtensionAPI) {
       includeSessions: Type.Optional(Type.Boolean()),
       ref: Type.Optional(Type.String()),
       maxBytes: Type.Optional(Type.Number({ minimum: 1, maximum: 128000 })),
+      docsOnly: Type.Optional(Type.Boolean()),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       try {
@@ -9745,7 +9747,7 @@ export default function (pi: ExtensionAPI) {
       // consulted, and never resolved with a fabricated result.
       const pendingLearnerSamples: Array<Record<string, any>> = [];
       /** Bind every pending sample to the run's real verifier outcome. */
-      const resolvePendingLearnerSamples = (outcome = {}) => {
+      const resolvePendingLearnerSamples = (outcome: Record<string, any> = {}) => {
         const resolutions: Array<Record<string, any>> = [];
         for (const pending of pendingLearnerSamples.splice(0, pendingLearnerSamples.length)) {
           try {
@@ -9883,7 +9885,7 @@ export default function (pi: ExtensionAPI) {
         isError: true,
       });
 
-      const run = async (agent: AgentName, task: string, attempt = 1, failure?: string) => {
+      const run = async (agent: AgentName, task: string, attempt = 1, failure?: string): Promise<RunResult> => {
         const planningBudget = planningRuntimeBudget(roleForAgent(agent), attempt, {
           executionProfile: policy.executionProfile,
           risk: policy.risk,
@@ -10685,7 +10687,10 @@ export default function (pi: ExtensionAPI) {
         const deterministicChecks = deterministicReadOnlyGitCommands(params.task);
         let inspection: any;
 
-        const readOnlyRequirementFastGate = requirementLedgerAllowsDeterministicFastPass(executionContract.requirementLedger);
+        const readOnlyRequirementFastGate = requirementLedgerAllowsDeterministicFastPass(
+          executionContract.requirementLedger,
+          { readOnlyInvariant: true },
+        );
         if (deterministicChecks.length > 0 && readOnlyRequirementFastGate.allowed) {
           const rows: any[] = [];
           for (const spec of deterministicChecks) {
@@ -11800,7 +11805,7 @@ export default function (pi: ExtensionAPI) {
             ).catch(() => null);
           }
 
-          const memoryFiles = [...new Set(structuredPlan.tasks.flatMap((task: any) => taskWriteFiles(task)))];
+          const memoryFiles: string[] = [...new Set(structuredPlan.tasks.flatMap((task: any) => taskWriteFiles(task)))] as string[];
           const memory = durableWork
             ? durableFinalization?.finalized?.memory || null
             : await rememberVerifiedTask(cwd, params.task, integration, integration, memoryFiles);
@@ -12567,7 +12572,7 @@ export default function (pi: ExtensionAPI) {
         "content artifacts hits/misses/evictions: " + (contentArtifacts?.contentArtifactHits ?? 0) + "/" + (contentArtifacts?.contentArtifactMisses ?? 0) + "/" + (contentArtifacts?.contentArtifactEvictions ?? 0),
         "content hashes git-blob/sha256: " + (contentArtifacts?.contentHashSource?.["git-blob"] ?? 0) + "/" + (contentArtifacts?.contentHashSource?.sha256 ?? 0),
         "files reparsed / bytes read: " + (contentArtifacts?.filesReparsed ?? 0) + "/" + (contentArtifacts?.bytesRead ?? 0),
-        "repo map queries/selected/context chars: " + repoMapStats().queries + "/" + repoMapStats().selected + "/" + repoMapStats().contextChars,
+        "repo map queries/selected/context chars: " + repoMapStats().queries + "/" + repoMapStats().selectedCount + "/" + repoMapStats().contextChars,
         "task telemetry controller-runs/pass-rate/retries: " + (telemetry?.byScope?.["controller-run"]?.runs ?? 0) + "/" + (telemetry?.byScope?.["controller-run"]?.passRate == null ? "n/a" : telemetry.byScope["controller-run"].passRate.toFixed(3)) + "/" + (telemetry?.byScope?.["controller-run"]?.providerRetries ?? 0),
         "compaction recalled/created: " + (compactionRecall?.recalledRefs ?? 0) + "/" + (compactionRecall?.compactedRefs ?? 0),
         "efficiency observations/provider-token rows: " + (efficiency?.observations ?? 0) + "/" + (efficiency?.measuredProviderTokenRows ?? 0),

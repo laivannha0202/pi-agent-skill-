@@ -2,7 +2,32 @@
 
 Repository này hiện đóng gói UES cho **Pi Agent**.
 
-**Current package runtime:** 16.0.0 — Deterministic Trust & Correctness Hardening. V16 fail-closes Turbo deterministic PASS on incomplete static diagnostics for supported changed source files, protects active durable Evidence Store refs from GC, audits resume evidence integrity, preserves external/MCP provenance as non-authoritative data, retries transient Windows cleanup locks, and makes measured model routing retry/token-cost aware. V15.9 Adaptive Agent Intelligence remains the underlying ACI/context/runtime architecture; thinking, safety and independent verifier requirements are not lowered.
+<!-- ues-version: 16.18.0 -->
+
+**Current package runtime:** 16.18.0 — Adaptive Full-Power Optimization. V16.18 changes **when** existing capabilities activate instead of removing them: provisional FAST discovery with lossless escalation, one run-scoped workspace generation, lazy LSP hydration, a two-stage LIGHT/FULL context pipeline, a planner value gate, a deterministic weak-model decision capsule, and a **PARTIAL** global resource governor that currently guards the advisor consult only. FAST / BALANCED / DEEP remain the public profiles. No permission, containment or verification authority is weakened, and provider token usage remains `NOT_MEASURED` offline. The V16 deterministic correctness gates and the V15.9 adaptive architecture remain in force underneath.
+
+## V16.18 Adaptive Full-Power Optimization
+
+- Unknown scope no longer implies BALANCED. A bounded provisional FAST lane may start cheaply and must escalate losslessly when runtime evidence shows more than 3 files, more than 1 subsystem, insufficient discovery, competing causes, or a safety floor such as auth/security/payment/schema.
+- One immutable workspace generation is shared by admission, budget, context, cache, advisor, planner and verification; a real mutation invalidates it once and the next reader captures exactly one fresh generation.
+- The LSP provider is hydrated on first real diagnostic use. A docs/config task does not load the language-server stack, and a never-hydrated stack shuts down without importing it.
+- LIGHT context is limited to FAST / attempt 1 and escalates once to the unchanged FULL context. Only FULL packs are cached. The planner value gate can skip planning only for a runtime-proven bounded edit and never lowers a safety floor.
+- The global resource governor is **PARTIAL**: it defines shared ceilings and guards the advisor consult, while test, RPC, fleet, LSP, browser and service lanes keep their local limits. An unavailable advisor fails open for `AUTO` and remains fail-loud for `FORCE`.
+- The weak-model decision capsule is deterministic, evidence-only, and carries no plan or verdict authority.
+- See [V16.18](./V16.18-ADAPTIVE-FULL-POWER-OPTIMIZATION.md) for the full implementation and remaining-limitation list.
+
+## V16.10–V16.17 runtime evolution
+
+| Release | Contract |
+| --- | --- |
+| [V16.10](./V16.10-CONTEXT-INTELLIGENCE-ECONOMY.md) | Bounded tool-output economy, context kernel, repository intelligence, semantic tool routing and verification ladder |
+| [V16.11](./V16.11-ADVISOR-LIFECYCLE-EVENT-FIRST.md) | Advisor worker lifecycle, epochs, transport, latency and resource hygiene |
+| [V16.12](./V16.12-EXECUTION-ACCELERATION-RUNTIME.md) | Verification receipts, task DAG scheduling, tool-result reuse and incremental verification |
+| [V16.13](./V16.13-EXTERNAL-RESEARCH-INTELLIGENCE.md) | External research, provider routing, network policy, freshness and claim binding |
+| [V16.14](./V16.14-ULTRA-FAST-TOKEN-ECONOMY.md) | Research cancellation, network policy and token-economy measurement |
+| [V16.15](./V16.15-SINGLE-SHOT-PARALLEL-CODING.md) | Proven-independent writer waves, conflict graph and transactional integration |
+| [V16.16](./V16.16-CRITICAL-PATH-EXECUTION-COST-RUNTIME.md) | Critical-path economy, durable intent, async Git and run-bound sandboxes |
+| [V16.17](./V16.17-EXECUTION-CORE-CONSOLIDATION.md) | One authority per subsystem: conflicts, usage semantics, run budget, deadlines and privileged-context fencing |
 
 ## V16 Deterministic Trust & Correctness Hardening
 
@@ -36,7 +61,7 @@ Repository này hiện đóng gói UES cho **Pi Agent**.
 
 - Node.js 22.19+
 - Git
-- `@earendil-works/pi-coding-agent`
+- `@earendil-works/pi-coding-agent` 1.4.0+ (tested with 1.4.0)
 
 ## Install
 
@@ -59,13 +84,13 @@ ues version
 GitHub main can still be installed when source-head testing is intended:
 
 ```cmd
-pi install git:github.com/laivannha0202/opencode-agent-skill-
+pi install git:github.com/laivannha0202/pi-agent-skill-
 ```
 
 Project-local:
 
 ```cmd
-pi install git:github.com/laivannha0202/opencode-agent-skill- -l
+pi install git:github.com/laivannha0202/pi-agent-skill- -l
 ```
 
 Hoặc từ checkout local:

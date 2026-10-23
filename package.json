@@ -54,12 +54,14 @@
     "scripts/browser-worker-v16-3.mjs",
     "scripts/smoke-deepseek-web-v16-3.mjs",
     "docs/PI-COMPAT.md",
+    "docs/NPM-PUBLISH.md",
     "docs/OPENCODE-COMPAT.md",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
     "syntax": "node scripts/syntax-check.mjs",
+    "typecheck:pi": "tsc -p tsconfig.typecheck.json",
     "test": "node scripts/run-test-suite.mjs",
     "test:pi": "node scripts/run-test-suite.mjs --concurrency=1 --timeout-ms=90000 test/pi-package.test.mjs",
     "docs:check": "node scripts/check-release-consistency.mjs",
@@ -67,7 +69,7 @@
     "smoke:pi": "node scripts/smoke-pi-extension.mjs",
     "smoke:package": "node scripts/smoke-package-closure.mjs",
     "eval:pi": "node scripts/eval-pi.mjs",
-    "ci": "npm run integrity && npm run runtime:exports && npm run syntax && npm test && npm run docs:check && npm pack --dry-run && npm run smoke:pi && npm run smoke:package && npm run smoke:packed && npm run accept:fresh-pi",
+    "ci": "npm run integrity && npm run runtime:exports && npm run syntax && npm run typecheck:pi && npm test && npm run docs:check && npm pack --dry-run && npm run smoke:pi && npm run smoke:package && npm run smoke:packed && npm run accept:fresh-pi",
     "prepublishOnly": "npm run release:verify",
     "smoke:packed": "node scripts/smoke-packed-install.mjs",
     "accept:fresh-pi": "node scripts/acceptance-fresh-pi.mjs",
@@ -111,10 +113,10 @@
     "bench:web-reasoning": "node scripts/bench-web-reasoning-ab.mjs",
     "validate:v16.3:accuracy": "node scripts/validate-v16-3-deepseek-accuracy.mjs",
     "eval:v16.4": "node scripts/run-test-suite.mjs --concurrency=4 --timeout-ms=90000 test/release-consistency-v16-4.test.mjs test/lazy-runtime-v16-4.test.mjs test/lazy-runtime-production-v16-4.test.mjs test/structural-escalation-v16-4.test.mjs test/fresh-evidence-v16-4.test.mjs test/decision-packet-tiers-v16-4.test.mjs test/verified-cost-learner-v16-4.test.mjs test/web-reasoning-corpus-v16-4.test.mjs test/consult-prep-v16-4.test.mjs test/repo-map-measurements-v16-4.test.mjs test/release-coordinator-v16-4.test.mjs",
-    "eval:v16.5": "node scripts/run-test-suite.mjs --concurrency=4 --timeout-ms=90000 test/skill-registry-v16-5.test.mjs test/skill-router-v16-5.test.mjs test/skill-capsule-v16-5.test.mjs test/tool-surface-v3.test.mjs test/subagent-fabric-v16-5.test.mjs test/delegation-fleet-v16-5.test.mjs test/verified-handoff-v16-5.test.mjs test/deepseek-advisors-v16-5.test.mjs test/agent-observer-v16-5.test.mjs test/readme-v16-5.test.mjs && node scripts/eval-skill-routing-v16-5.mjs > /dev/null && node scripts/eval-v16-5.mjs > /dev/null",
+    "eval:v16.5": "node scripts/run-test-suite.mjs --concurrency=4 --timeout-ms=90000 test/skill-registry-v16-5.test.mjs test/skill-router-v16-5.test.mjs test/skill-capsule-v16-5.test.mjs test/tool-surface-v3.test.mjs test/subagent-fabric-v16-5.test.mjs test/delegation-fleet-v16-5.test.mjs test/verified-handoff-v16-5.test.mjs test/deepseek-advisors-v16-5.test.mjs test/agent-observer-v16-5.test.mjs test/readme-v16-5.test.mjs && node scripts/run-quiet.mjs node scripts/eval-skill-routing-v16-5.mjs && node scripts/run-quiet.mjs node scripts/eval-v16-5.mjs",
     "eval:v16.5:measure": "node scripts/eval-v16-5.mjs",
     "eval:v16.5:routing": "node scripts/eval-skill-routing-v16-5.mjs",
-    "eval:v16.6": "node scripts/run-test-suite.mjs --concurrency=4 --timeout-ms=90000 test/unified-budget-v16-6.test.mjs test/deepseek-session-v16-6.test.mjs test/orchestration-surface-v16-6.test.mjs test/v16-6-measured-regressions.test.mjs test/v16-6-1-regressions.test.mjs test/release-coordinator-v16-6.test.mjs && node scripts/eval-v16-6.mjs > /dev/null",
+    "eval:v16.6": "node scripts/run-test-suite.mjs --concurrency=4 --timeout-ms=90000 test/unified-budget-v16-6.test.mjs test/deepseek-session-v16-6.test.mjs test/orchestration-surface-v16-6.test.mjs test/v16-6-measured-regressions.test.mjs test/v16-6-1-regressions.test.mjs test/release-coordinator-v16-6.test.mjs && node scripts/run-quiet.mjs node scripts/eval-v16-6.mjs",
     "eval:v16.6:measure": "node scripts/eval-v16-6.mjs",
     "eval:v16.7": "node scripts/run-test-suite.mjs --concurrency=4 --timeout-ms=90000 test/deepseek-profile-v16-7.test.mjs test/deepseek-profile-lock-external-death-v16-7-1.test.mjs test/deepseek-login-flow-v16-7-1.test.mjs test/deepseek-web-config-v16-7-1.test.mjs test/agent-progress-watchdog-v16-7-1.test.mjs test/deepseek-web-grounding-v16-7-1.test.mjs test/deepseek-web-adapter-wiring-v16-7-1.test.mjs test/deepseek-web-production-path-v16-7-1.test.mjs test/ues-run-teardown-v16-7-1.test.mjs test/ues-workspace-root-callsites-v16-7-1.test.mjs test/deepseek-consult-cache-identity-v16-7-1.test.mjs test/deepseek-failure-classification-v16-7-1.test.mjs test/deepseek-consultation-policy-v16-7-1.test.mjs test/agent-progress-watchdog-integration-v16-7-1.test.mjs test/ues-loop-recovery-v16-7-1.test.mjs test/ues-execution-economy-v16-7-1.test.mjs test/web-reasoning-production-economy-v16-7-1.test.mjs",
     "eval:v16.8": "node scripts/run-test-suite.mjs --concurrency=4 --timeout-ms=90000 test/web-decision-barrier-v16-8.test.mjs test/web-reasoning-v16-8-production.test.mjs test/source-integrity-v16-8.test.mjs",
@@ -156,11 +158,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/laivannha0202/opencode-agent-skill-.git"
+    "url": "git+https://github.com/laivannha0202/pi-agent-skill-.git"
   },
-  "homepage": "https://github.com/laivannha0202/opencode-agent-skill-#readme",
+  "homepage": "https://github.com/laivannha0202/pi-agent-skill-#readme",
   "bugs": {
-    "url": "https://github.com/laivannha0202/opencode-agent-skill-/issues"
+    "url": "https://github.com/laivannha0202/pi-agent-skill-/issues"
   },
   "license": "MIT",
   "pi": {
@@ -186,5 +188,12 @@
     "typebox": {
       "optional": true
     }
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^1.4.0",
+    "playwright": "^1.64.1",
+    "typebox": "^1.3.27",
+    "typescript": "^5.9.3",
+    "typescript-language-server": "^6.0.2"
   }
 }

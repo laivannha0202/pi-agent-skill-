@@ -785,7 +785,10 @@ export async function runBenchmark(options = {}) {
     now: options.now || (() => Date.now()),
     sleep: options.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
     live,
-    liveInvoke: options.liveInvoke || null,
+    liveInvoke: options.liveInvoke
+      || (typeof options.liveWorker?.invoke === "function"
+        ? (action, context) => options.liveWorker.invoke(action, context)
+        : null),
     closeBrowser: options.closeBrowser || null,
     maxPacketChars: options.maxPacketChars || 24_000,
     answerTimeoutMs: options.answerTimeoutMs || 120_000,

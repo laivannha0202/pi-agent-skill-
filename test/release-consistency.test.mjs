@@ -188,6 +188,23 @@ test("release checker fails when CI drops packed install smoke", () => {
 })
 
 
+test("release checker fails when CI drops the semantic TypeScript gate", () => {
+  const tmp = mkdirTemp()
+  try {
+    fillFixture(tmp)
+    const pkgPath = path.join(tmp, "package.json")
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf8"))
+    pkg.scripts.ci = String(pkg.scripts.ci || "").replace(/\s*&&\s*npm run typecheck:pi/, "")
+    writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n")
+    const result = checkReleaseConsistency(tmp)
+    assert.equal(result.pass, false)
+    assert.ok(result.errors.some((error) => error.includes("typecheck gate")))
+  } finally {
+    rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
+
 test("release checker fails when full npm test drops the bounded runner", () => {
   const tmp = mkdirTemp()
   try {
@@ -220,6 +237,96 @@ test("release checker fails when focused Pi test bypasses the bounded runner", (
   }
 })
 
+
+test("release checker rejects the deprecated Pi install syntax", () => {
+  const tmp = mkdirTemp()
+  try {
+    fillFixture(tmp)
+    const readmePath = path.join(tmp, "README.md")
+    const readme = readFileSync(readmePath, "utf8").replace(
+      "pi install npm:opencode-agent-skill",
+      "pi package add opencode-agent-skill",
+    )
+    writeFileSync(readmePath, readme)
+    const result = checkReleaseConsistency(tmp)
+    assert.equal(result.pass, false)
+    assert.ok(result.errors.some((error) => error.includes("deprecated install syntax")))
+  } finally {
+    rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
+test("release checker keeps the PI-COMPAT runtime version in sync with package.json", () => {
+  const tmp = mkdirTemp()
+  try {
+    fillFixture(tmp)
+    const compatPath = path.join(tmp, "docs", "PI-COMPAT.md")
+    const original = readFileSync(compatPath, "utf8")
+    const compat = original.replace(
+      /(<!--\s*ues-version:\s*)[^\s>]+(\s*-->)/i,
+      (_match, prefix, suffix) => prefix + "9.0.0" + suffix,
+    )
+    assert.notEqual(compat, original, "PI-COMPAT version fixture mutation did not match current format")
+    writeFileSync(compatPath, compat)
+    const result = checkReleaseConsistency(tmp)
+    assert.equal(result.pass, false)
+    assert.ok(result.errors.some((error) => error.includes("docs/PI-COMPAT.md: current runtime says 9.0.0")))
+  } finally {
+    rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
+test("release checker rejects stale package repository metadata", () => {
+  const tmp = mkdirTemp()
+  try {
+    fillFixture(tmp)
+    const pkgPath = path.join(tmp, "package.json")
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf8"))
+    pkg.repository.url = "git+https://github.com/laivannha0202/opencode-agent-skill-.git"
+    writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n")
+    const result = checkReleaseConsistency(tmp)
+    assert.equal(result.pass, false)
+    assert.ok(result.errors.some((error) => error.includes("repository.url must be")))
+  } finally {
+    rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
+test("release checker rejects stale repository URLs in current docs", () => {
+  const tmp = mkdirTemp()
+  try {
+    fillFixture(tmp)
+    const contributingPath = path.join(tmp, "CONTRIBUTING.md")
+    writeFileSync(
+      contributingPath,
+      readFileSync(contributingPath, "utf8") +
+        "\ngit clone https://github.com/laivannha0202/opencode-agent-skill-.git\n",
+    )
+    const result = checkReleaseConsistency(tmp)
+    assert.equal(result.pass, false)
+    assert.ok(result.errors.some((error) => error.includes("stale repository URL")))
+  } finally {
+    rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
+test("release checker rejects a hardcoded version in the npm release guide", () => {
+  const tmp = mkdirTemp()
+  try {
+    fillFixture(tmp)
+    const publishPath = path.join(tmp, "docs", "NPM-PUBLISH.md")
+    writeFileSync(
+      publishPath,
+      readFileSync(publishPath, "utf8") +
+        "\nCurrent stable release target:\n\n```text\n14.4.0\n```\n",
+    )
+    const result = checkReleaseConsistency(tmp)
+    assert.equal(result.pass, false)
+    assert.ok(result.errors.some((error) => error.includes("literal X.Y.Z versions are not allowed")))
+  } finally {
+    rmSync(tmp, { recursive: true, force: true })
+  }
+})
 
 test("release checker fails when focused V16 eval drops a required hardening regression", () => {
   const tmp = mkdirTemp()
