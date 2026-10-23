@@ -8,6 +8,7 @@ import { classifyEngineeringTask } from "../lib/task-policy.mjs"
 import { classifyDecisionPolicy } from "../lib/decision-policy.mjs"
 import { selectSkillNames } from "../lib/skill-compiler.mjs"
 import { auditCompletion } from "../lib/completion-auditor.mjs"
+import { createVerificationReceipt } from "../lib/evidence-receipt.mjs"
 import { buildCompactionResumeGuard } from "../lib/compaction-resume-guard.mjs"
 
 async function json(file, value) {
@@ -91,11 +92,24 @@ test("micro-skill ranking keeps primary role skill while promoting task-relevant
 })
 
 test("completion auditor rejects inferred or unknown acceptance claims", () => {
+  // A VERIFIED claim is only eligible when the underlying test receipt is valid
+  // for the current workspace; fake { passed: true } objects must not pass.
+  const fingerprint = "decision-runtime-acceptance-fixture"
+  const workspaceSnapshot = { cacheable: true, fingerprint, changedFiles: ["src/refund.ts"] }
+  const behavioralReceipts = [{ receipt: createVerificationReceipt({
+    command: "node",
+    args: ["--test", "test/refund.test.mjs"],
+    exitCode: 0,
+    workspaceBefore: fingerprint,
+    workspaceAfter: fingerprint,
+  }) }]
+
   const inferred = auditCompletion({
     verification: passingVerification("INFERRED: refund path should be idempotent"),
     requireIntegration: false,
     requireVisual: false,
-    behavioralReceipts: [{ passed: true, exitCode: 0 }],
+    workspaceSnapshot,
+    behavioralReceipts,
     requireBehavioralReceipt: true,
     requireClaimEvidenceStatus: true,
   })
@@ -106,7 +120,8 @@ test("completion auditor rejects inferred or unknown acceptance claims", () => {
     verification: passingVerification("VERIFIED: refund idempotency test passed"),
     requireIntegration: false,
     requireVisual: false,
-    behavioralReceipts: [{ passed: true, exitCode: 0 }],
+    workspaceSnapshot,
+    behavioralReceipts,
     requireBehavioralReceipt: true,
     requireClaimEvidenceStatus: true,
   })
@@ -117,12 +132,23 @@ test("completion auditor rejects inferred or unknown acceptance claims", () => {
     verification: passingVerification("refund idempotency test passed"),
     requireIntegration: false,
     requireVisual: false,
-    behavioralReceipts: [{ passed: true, exitCode: 0 }],
+    workspaceSnapshot,
+    behavioralReceipts,
     requireBehavioralReceipt: true,
     requireClaimEvidenceStatus: true,
   })
   assert.equal(unstated.passed, false)
   assert.ok(unstated.failures.includes("acceptance-criteria-evidence-status-missing"))
+
+  const forged = auditCompletion({
+    verification: passingVerification("VERIFIED: refund idempotency test passed"),
+    workspaceSnapshot,
+    behavioralReceipts: [{ passed: true, exitCode: 0 }],
+    requireBehavioralReceipt: true,
+    requireClaimEvidenceStatus: true,
+  })
+  assert.equal(forged.passed, false)
+  assert.ok(forged.failures.includes("fresh-behavioral-receipt-missing"))
 })
 
 test("compaction resume guard emits a deterministic instruction epoch", async () => {
