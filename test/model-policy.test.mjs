@@ -119,3 +119,20 @@ test("V11 unconfigured capability metadata does not block legacy/default model e
   )
   assert.equal(result.capabilityBlocked, false)
 })
+
+// Preserved historical regression cases from test/model-policy-v7.test.mjs; assertions unchanged.
+test("adaptive model policy raises a standard executor to heavy for high-risk work", () => {
+  const result = resolveAdaptiveModel(
+    "executor",
+    1,
+    { modelTier: "heavy", mode: "long-horizon", risk: "high", score: 6 },
+    {
+      maxEscalations: 2,
+      roleTiers: { executor: "standard" },
+      tiers: { light: "p/light", standard: "p/mid", heavy: "p/heavy" },
+    },
+  )
+  assert.equal(result.tier, "heavy")
+  assert.equal(result.model, "p/heavy")
+  assert.equal(result.policy.risk, "high")
+})

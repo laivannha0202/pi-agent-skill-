@@ -27,3 +27,19 @@
 7. No benchmark or measured speed-up claim until the changed suite completes on the user's machine. Optimizing file count does not guarantee lower elapsed time.
 
 This first phase adds inventory and focused commands **without deleting or renaming tests**, preserving the 296-file baseline for safe comparisons.
+
+## Consolidation pass 1 (pending local full-suite revalidation)
+
+- Moved 1 historical regression case from `test/model-policy-v7.test.mjs` into `test/model-policy.test.mjs` (7 + 1 = 8 named test cases).
+- Moved 2 historical regression cases and their helper from `test/task-graph-v7.test.mjs` into `test/task-graph.test.mjs` (4 + 2 = 6 named test cases).
+- Deleted only the two now-redundant *file shells*, after preserving all test functions and assertions verbatim.
+- The release/package scripts do not directly reference the two former paths; `npm test` discovers files recursively.
+- Expected suite file count after merge: **294**, down from baseline 296, with **all 14 named test cases intact** across these families.
+- This is structural consolidation, **not** removal of duplicated assertions or a guaranteed speed gain. Validate on Windows with:
+
+```cmd
+node scripts/run-test-suite.mjs test/model-policy.test.mjs test/task-graph.test.mjs
+npm test
+```
+
+- Mark full-suite success and performance change only after the local run completes; if anything regresses, revert this commit rather than weakening a test.
