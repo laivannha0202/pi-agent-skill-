@@ -1,6 +1,12 @@
 # GitHub Ruleset Readiness
 
-This document records the recommended GitHub repository ruleset configuration for the `main` branch, to be activated only after CI Gate and Security Gate have each achieved at least one successful run.
+GitHub Actions is intentionally disabled in this repository by owner decision. There are no CI Gate or Security Gate workflows and none must be created or restored. Verification is performed locally.
+
+## No GitHub Actions
+
+- Do not add or restore `.github/workflows/**`.
+- Do not configure required status checks that depend on GitHub Actions.
+- All build, test, pack, security audit, and release checks run locally (see `npm run ci` and `docs/NPM-PUBLISH.md`).
 
 ## Recommended ruleset
 
@@ -14,10 +20,9 @@ This document records the recommended GitHub repository ruleset configuration fo
 2. **Block force pushes** — no `git push --force` or `git push -f` to `main`.
 3. **Require pull request before merge** — all changes must go through a PR.
 4. **Require conversation resolution** — PR reviewers must resolve all inline comments before merge.
-5. **Require status checks** — PRs must have passing CI Gate and Security Gate checks before merge.
-6. **Require branch up to date** — PR branches must be up to date with `main` before merge (applies when there are multiple contributors; can be relaxed for single-maintainer setups).
-7. **Required check: CI Gate** — the aggregate CI check from `.github/workflows/ci.yml`.
-8. **Required check: Security Gate** — the aggregate security check from `.github/workflows/security.yml`.
+5. **Require branch up to date** — PR branches must be up to date with `main` before merge (applies when there are multiple contributors; can be relaxed for single-maintainer setups).
+
+Status checks are not required because GitHub Actions is disabled. If external checks are ever added by the owner, they must be local/manual and documented separately.
 
 ## Approval policy for single-maintainer repo
 
@@ -31,20 +36,24 @@ This repository currently has one maintainer. Setting `required approval = 1` wo
 GitHub supports both classic branch protection rules and repository rulesets simultaneously. When both are configured:
 
 - They can apply independently to different aspects of branch protection.
-- Be cautious of duplicate or conflicting protections (e.g., two rules both requiring status checks but with different required lists).
+- Be cautious of duplicate or conflicting protections.
 - If migrating from classic protection to ruleset, remove the classic rule after confirming the ruleset is active and working.
 
-## Activation prerequisite
+## Manual release process
 
-Do not enable the ruleset until:
+Releases are manual and local:
 
-1. CI Gate has at least one successful run on `main`.
-2. Security Gate has at least one successful run on `main` or a PR.
+1. Run `npm run integrity`.
+2. Run `npm run syntax`.
+3. Run `npm run typecheck:pi`.
+4. Run `npm test`.
+5. Run `npm run smoke:pi`.
+6. Run `npm pack --dry-run` and review package contents.
+7. Publish with `npm publish` only when explicitly intended.
 
-Without these prerequisites, the ruleset would block all merges immediately after activation, effectively locking the repository.
+No GitHub Actions, automated release, or CI gate is used.
 
 ## Current status
 
-- **CI Gate:** Added in `.github/workflows/ci.yml`. Awaiting first successful run.
-- **Security Gate:** Added in `.github/workflows/security.yml`. Awaiting first successful run.
-- **Ruleset:** NOT YET ACTIVATED. Will be configured via GitHub admin settings after both gates have successful runs.
+- **GitHub Actions:** Intentionally disabled.
+- **Ruleset:** Configure via GitHub admin settings as needed; do not depend on Actions-based status checks.

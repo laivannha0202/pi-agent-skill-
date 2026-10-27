@@ -1,4 +1,4 @@
-import { readFileSync, statSync } from "node:fs"
+import { existsSync, lstatSync, readFileSync, readdirSync, statSync } from "node:fs"
 import { spawnSync } from "node:child_process"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -10,6 +10,85 @@ const INTENTIONALLY_DISABLED_WORKFLOW_FAILURES = Object.freeze([
   /^\.github\/workflows\/security\.yml: unreadable \(ENOENT:/,
   /^\.github\/workflows\/publish\.yml: unreadable \(ENOENT:/,
 ])
+
+const GITHUB_ACTIONS_WORKFLOW_DIR_RELATIVE = ".github/workflows"
+
+export function listGitHubActionsWorkflowFiles(root = ROOT) {
+  const dir = path.join(root, ...GITHUB_ACTIONS_WORKFLOW_DIR_RELATIVE.split("/"))
+  const files = []
+
+  let rootInfo
+  try {
+    rootInfo = lstatSync(dir)
+  } catch (error) {
+    if (error?.code === "ENOENT") return files
+    const wrapped = new Error(
+      `${GITHUB_ACTIONS_WORKFLOW_DIR_RELATIVE}: cannot verify workflow state (${error?.code || "error"})`,
+    )
+    if (error?.code) wrapped.code = error.code
+    throw wrapped
+  }
+
+  if (rootInfo.isSymbolicLink()) {
+    throw new Error(`${GITHUB_ACTIONS_WORKFLOW_DIR_RELATIVE}: symlinked workflow directory is not safe to verify`)
+  }
+  if (!rootInfo.isDirectory()) {
+    throw new Error(
+      `${GITHUB_ACTIONS_WORKFLOW_DIR_RELATIVE}: expected a directory, found ${rootInfo.isFile() ? "file" : "special file"}`,
+    )
+  }
+
+  function walk(current) {
+    let entries
+    try {
+      entries = readdirSync(current, { withFileTypes: true })
+    } catch (error) {
+      const relativeCurrent =
+        path.relative(root, current).replaceAll("\\", "/") || GITHUB_ACTIONS_WORKFLOW_DIR_RELATIVE
+      const wrapped = new Error(
+        `${relativeCurrent}: cannot read directory (${error?.code || "error"})`,
+      )
+      if (error?.code) wrapped.code = error.code
+      throw wrapped
+    }
+
+    for (const entry of entries) {
+      const full = path.join(current, entry.name)
+      const relativePath = path.relative(root, full).replaceAll("\\", "/")
+      let info
+      try {
+        info = lstatSync(full)
+      } catch (error) {
+        const wrapped = new Error(
+          `${relativePath}: cannot inspect entry (${error?.code || "error"})`,
+        )
+        if (error?.code) wrapped.code = error.code
+        throw wrapped
+      }
+
+      if (info.isSymbolicLink()) {
+        throw new Error(`${relativePath}: symlink is not safe to verify in GitHub Actions workflow directory`)
+      }
+      if (info.isDirectory()) {
+        walk(full)
+      } else if (info.isFile()) {
+        files.push(relativePath)
+      } else {
+        throw new Error(`${relativePath}: unsupported file type in GitHub Actions workflow directory`)
+      }
+    }
+  }
+
+  walk(dir)
+  return files.sort()
+}
+
+export function noGitHubActionsWorkflowFailures(root = ROOT) {
+  return listGitHubActionsWorkflowFiles(root).map(
+    (file) => `${file}: GitHub Actions workflow present (intentionally disabled)`,
+  )
+}
+
 
 // V16.8 lives outside the historical integrity core so disabling GitHub Actions
 // never weakens the new production contracts. These checks run locally as part
@@ -2334,6 +2413,20 @@ export function onlyIntentionallyDisabledWorkflowFailures(failures = []) {
 }
 
 export function runSourceIntegrity() {
+  let workflowFailures = []
+  try {
+    workflowFailures = noGitHubActionsWorkflowFailures(ROOT)
+  } catch (error) {
+    process.stderr.write("GitHub Actions workflow state could not be verified safely:\n")
+    process.stderr.write(`- ${error?.message || error}\n`)
+    return 1
+  }
+  if (workflowFailures.length) {
+    process.stderr.write("GitHub Actions workflows are intentionally disabled; workflow files are not allowed:\n")
+    for (const failure of workflowFailures) process.stderr.write(`- ${failure}\n`)
+    return 1
+  }
+
   const v16_8Failures = validateV16_8SourceIntegrity(ROOT)
   if (v16_8Failures.length) {
     process.stderr.write("V16.8 source-integrity validation failed:\n")

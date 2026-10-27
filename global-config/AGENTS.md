@@ -132,3 +132,7 @@ Merge, push, publish and deploy are external side effects and require explicit u
 ## Completion standard
 
 A task is complete only when the requested behavior is implemented, the acceptance criteria are addressed, fresh relevant verification supports the result, the final diff is reviewed, and remaining limitations are stated accurately.
+
+## No GitHub Actions (permanent)
+
+GitHub Actions is intentionally disabled by owner decision. Do not re-enable, create, restore, modify, or delete `.github/workflows/**` (including new names), or propose Actions-based solutions. Run verification locally (`npm run integrity`, `npm test`, etc.). Only an explicit owner request may reconsider.

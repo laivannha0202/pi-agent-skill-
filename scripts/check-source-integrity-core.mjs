@@ -1086,7 +1086,7 @@ const CONTRACTS = [
   {
     file: "lib/completion-auditor.mjs",
     minBytes: 2_500,
-    startsWith: "function text",
+    startsWith: "import { validateVerificationReceipt } from \"./evidence-receipt.mjs\"",
     required: ["auditCompletion", "fresh-behavioral-receipt-missing", "missing-report-section", "benignFailureSection", "outOfScopeGapOnly", "verification-reports-out-of-scope-gap"],
   },
   {
