@@ -51,6 +51,8 @@ const argv = process.argv.slice(2)
 const liveFlag = argv.includes("--live")
 const profileName = (argv.find((entry) => entry.startsWith("--profile=")) || "").slice("--profile=".length) || ""
 const headedFlag = argv.includes("--headed")
+const channelArg = argv.find((entry) => entry.startsWith("--channel=")) || ""
+const BROWSER_CHANNEL = (channelArg.slice("--channel=".length) || process.env.UES_PLAYWRIGHT_CHANNEL || "msedge").trim() || "msedge"
 const profile = profileForMode({ live: liveFlag, profile: profileName })
 
 function boundedInt(value, fallback, min, max) {
@@ -122,14 +124,27 @@ async function main() {
       // A persistent context keeps cookies/storage on disk between runs, which is
       // the whole point of the profile: the user logs in ONCE, and the live smoke
       // reuses it. Nothing in this process ever reads those values back out.
-      context = await playwright.chromium.launchPersistentContext(profile.userDataDir, {
-        headless,
-        viewport: { width: 1440, height: 900 },
-        args: ["--disable-blink-features=AutomationControlled"],
-      })
+      try {
+        context = await playwright.chromium.launchPersistentContext(profile.userDataDir, {
+          channel: BROWSER_CHANNEL,
+          headless,
+          viewport: { width: 1440, height: 900 },
+          args: ["--disable-blink-features=AutomationControlled"],
+        })
+      } catch (error) {
+        const launchError = new Error(`browser-launch-failed: ${BROWSER_CHANNEL}: ${error?.message || error}`)
+        launchError.code = "BROWSER_LAUNCH_FAILED"
+        throw launchError
+      }
       page = context.pages()[0] || (await context.newPage());
     } else {
-      browser = await playwright.chromium.launch({ headless })
+      try {
+        browser = await playwright.chromium.launch({ channel: BROWSER_CHANNEL, headless })
+      } catch (error) {
+        const launchError = new Error(`browser-launch-failed: ${BROWSER_CHANNEL}: ${error?.message || error}`)
+        launchError.code = "BROWSER_LAUNCH_FAILED"
+        throw launchError
+      }
       context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
       page = await context.newPage()
     }
@@ -379,6 +394,7 @@ async function main() {
         profileReason: profile.reason,
         profileExists: profile.exists === true,
         headless: !headedFlag,
+        browserChannel: BROWSER_CHANNEL,
       };
       return encodeWorkerResponse({
         ok: true,
@@ -772,14 +788,25 @@ async function main() {
         failure: BROWSER_WORKER_FAILURE.UNKNOWN_ACTION,
       })
     } catch (error) {
+      const code = String(error?.code || "")
       const message = String(error?.message || error)
-      const failure = error?.code === BROWSER_WORKER_FAILURE.UNAVAILABLE
-        ? BROWSER_WORKER_FAILURE.UNAVAILABLE
-        : /timeout/i.test(message)
-          ? BROWSER_WORKER_FAILURE.TIMEOUT
-          : /login|sign in|unauthorized|401/i.test(message)
-            ? BROWSER_WORKER_FAILURE.AUTH_REQUIRED
-            : BROWSER_WORKER_FAILURE.PROVIDER_ERROR
+      const lower = message.toLowerCase()
+      let failure = BROWSER_WORKER_FAILURE.PROVIDER_ERROR
+      if (code === BROWSER_WORKER_FAILURE.UNAVAILABLE || /playwright is not installed/i.test(message)) {
+        failure = BROWSER_WORKER_FAILURE.UNAVAILABLE
+      } else if (code === "BROWSER_LAUNCH_FAILED" || /browser-launch-failed|executable doesn.t exist|browserType\.launch|cannot find browser/i.test(lower)) {
+        failure = "browser-launch-failed"
+      } else if (/err_cert|certificate|ssl protocol|self-signed/i.test(lower)) {
+        failure = "certificate-failed"
+      } else if (/err_connection|err_name_not_resolved|err_internet_disconnected|enotfound|econnrefused|network|fetch failed/i.test(lower)) {
+        failure = "network-failed"
+      } else if (/timeout/i.test(lower)) {
+        failure = BROWSER_WORKER_FAILURE.TIMEOUT
+      } else if (/login|sign in|unauthorized|401/i.test(lower)) {
+        failure = BROWSER_WORKER_FAILURE.AUTH_REQUIRED
+      } else if (operation === BROWSER_WORKER_OPERATION.NAVIGATE) {
+        failure = "navigation-failed"
+      }
       return encodeWorkerResponse({
         ok: false,
         requestId: String(request?.requestId || ""),

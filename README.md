@@ -215,18 +215,27 @@ holds authority over the task.
 | `AUTO` | Consults only on genuine signals; stays local for grounded or trivial tasks |
 | `FORCE` | Explicitly requests a consultation for a decision packet |
 
-### One-time setup
+### One-time setup (Windows / Microsoft Edge)
 
 ```bash
-# 1. Sign in once. This opens a REAL headed browser; you sign in yourself.
+# Recommended for new users: one guided setup using a separate UES-managed Edge profile.
+node bin\ocskill.mjs deepseek setup --browser edge --profile personal
+
+# Equivalent manual steps:
+# 1. Sign in once. This opens a REAL headed Edge window; you sign in yourself.
 #    UES never reads, fills or logs a password, cookie, token, OTP or CAPTCHA.
-ues deepseek login --profile personal
+node bin\ocskill.mjs deepseek login --profile personal
 
 # 2. Enable web reasoning and choose the posture (persisted; AUTO is the default).
-ues deepseek on                 # persist enabled=true
-ues deepseek mode auto          # off | auto | force  (never FORCE by default)
-ues deepseek status             # read-only: enabled, mode, active profile, lock
+node bin\ocskill.mjs deepseek on                 # persist enabled=true
+node bin\ocskill.mjs deepseek mode auto          # off | auto | force  (never FORCE by default)
+node bin\ocskill.mjs deepseek status             # read-only: enabled, mode, active profile, lock
 ```
+
+`setup --browser edge` uses Microsoft Edge through Playwright `channel: "msedge"` on a
+UES-managed persistent profile. It never uses your personal Edge profile and never copies
+cookies, tokens or credentials. AUTO is enabled only after a real read-only auth probe
+observes a signed-in session.
 
 `login` persists ONLY safe metadata (`enabled`, `mode`, the profile NAME) to
 `<ues-config>/.ues/web-reasoning.json`. No credential, cookie or storage state is ever written

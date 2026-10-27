@@ -26,7 +26,7 @@ import {
   PROFILE_STATE,
 } from "../lib/deepseek-profile-registry.mjs"
 import { inspectProfileLock } from "../lib/deepseek-profile-lock.mjs"
-import { LOGIN_OUTCOME, runManualLogin } from "../lib/deepseek-login-flow.mjs"
+import { LOGIN_OUTCOME, loginSafetyContract, runManualLogin } from "../lib/deepseek-login-flow.mjs"
 // V16.7.1 Part 6: persisted, secret-free web enablement metadata. `ues deepseek
 // on|off|mode` writes this so the daily flow is just `cd <project>; pi`.
 import { readWebConfig, resolveWebEnablement, writeWebConfig, WEB_CONFIG_MODE } from "../lib/deepseek-web-config.mjs"
@@ -1743,6 +1743,7 @@ const DEEPSEEK_PROFILE_USAGE = `Usage: ocskill deepseek <action> ...
   status [--profile <name>] [--json]
   profiles [--json]              List registered profiles and the active one
   doctor [--profile <name>] [--json]
+  setup --browser edge --profile <name> [--json]  One-time guided setup using Microsoft Edge
   login --profile <name> [--json]  Open a HEADED browser and sign in manually
   use|switch <name> [--json]     Select the active profile (never auto-selects)
   logout [--profile <name>] [--json]
@@ -1762,7 +1763,10 @@ the daily flow is just:  cd <project>; pi
 Precedence at runtime: env override > persisted config > built-in default.
 
 status/profiles/doctor/use/logout/remove-profile/on/off/mode never launch a
-browser.`
+browser.
+
+setup --browser edge uses a separate UES-managed Microsoft Edge profile. It never
+uses your personal Edge profile and never copies cookies, tokens or credentials.`
 
 function deepseekAuthReportFor(profileName, options = /** @type {any} */ ({})) {
   const configDir = getUesConfigDir()
@@ -1810,6 +1814,28 @@ function deepseekAuthReportFor(profileName, options = /** @type {any} */ ({})) {
  */
 async function deepseekLoginFlow(name, configDir) {
   const registration = registerProfile(name, { configDir })
+  // V16.18.1: refuse to open a second worker on a profile that is already
+  // driven by a live process. This is reported as PROFILE_LOCKED, never as a
+  // navigation or auth failure, so the operator gets an actionable remedy.
+  const preLock = inspectProfileLock(name, { configDir })
+  if (preLock.locked) {
+    return {
+      schemaVersion: 1,
+      policy: "deepseek-profile-login-v16-7-1",
+      profile: name,
+      profileId: registration.profile.id,
+      created: registration.created,
+      active: registration.active,
+      credentialFree: true,
+      outcome: LOGIN_OUTCOME.PROFILE_LOCKED,
+      humanActionRequired: false,
+      reason: `profile-locked-by-pid-${preLock.owner?.pid ?? "?"}`,
+      attempts: 0,
+      elapsedMs: 0,
+      safety: loginSafetyContract(),
+      instruction: `Profile "${name}" is already in use by pid ${preLock.owner?.pid ?? "?"}. Close that run or wait for it to finish, then retry.`,
+    }
+  }
   const workerScript = path.join(packageRoot, "scripts", "browser-worker-v16-3.mjs")
   // HEADED + PERSISTENT: the human needs a real window, and the session must
   // survive on disk for the next live run. `--headed` makes the browser visible;
@@ -1886,6 +1912,95 @@ async function deepseekLoginFlow(name, configDir) {
   }
   return payload
 }
+
+async function deepseekSetup(browser, name, configDir) {
+  const selectedBrowser = String(browser || "edge").trim().toLowerCase()
+  if (selectedBrowser !== "edge") {
+    throw new Error("Usage: ocskill deepseek setup --browser edge --profile <name>")
+  }
+  if (!name) {
+    throw new Error("Usage: ocskill deepseek setup --browser edge --profile <name>")
+  }
+  // Condition checks before opening any window.
+  const lock = inspectProfileLock(name, { configDir })
+  if (lock.locked) {
+    return {
+      schemaVersion: 1,
+      policy: "deepseek-edge-setup-v16-18-1",
+      browser: "edge",
+      profile: name,
+      outcome: LOGIN_OUTCOME.PROFILE_LOCKED,
+      humanActionRequired: false,
+      reason: `profile-locked-by-pid-${lock.owner?.pid ?? "?"}`,
+      attempts: 0,
+      elapsedMs: 0,
+      safety: loginSafetyContract(),
+      instruction: `Profile "${name}" is already in use by pid ${lock.owner?.pid ?? "?"}. Close that run, then retry setup.`,
+    }
+  }
+
+  // Verify the managed browser worker can start. This does not launch Edge; it
+  // only proves Playwright is installed and the worker protocol responds.
+  const workerScript = path.join(packageRoot, "scripts", "browser-worker-v16-3.mjs")
+  let capability = null
+  try {
+    const probe = spawnSync(process.execPath, [workerScript, "--probe", "--channel=msedge"], {
+      encoding: "utf8",
+      timeout: 30_000,
+      cwd: packageRoot,
+    })
+    const lines = String(probe.stdout || "").trim().split(/\r?\n/).filter(Boolean)
+    capability = lines.length ? JSON.parse(lines[lines.length - 1]) : null
+  } catch {
+    capability = null
+  }
+  const capabilityPayload = capability?.payload && typeof capability.payload === "object" ? capability.payload : capability
+  if (!capability || capability.ok !== true || capabilityPayload?.browserState !== "ready" || capabilityPayload?.playwright !== "available") {
+    return {
+      schemaVersion: 1,
+      policy: "deepseek-edge-setup-v16-18-1",
+      browser: "edge",
+      profile: name,
+      outcome: LOGIN_OUTCOME.BROWSER_UNAVAILABLE,
+      humanActionRequired: true,
+      reason: capabilityPayload?.reason || capability?.reason || "managed-browser-unavailable",
+      attempts: 0,
+      elapsedMs: 0,
+      safety: loginSafetyContract(),
+      instruction: "Install Playwright and Microsoft Edge, then re-run: ocskill deepseek setup --browser edge --profile " + name,
+    }
+  }
+
+  // Reuse the real headed manual login flow. It opens a separate Edge (channel
+  // msedge) on a UES-managed persistent profile and never touches credentials.
+  const result = await deepseekLoginFlow(name, configDir)
+  // Only a positively observed session enables AUTO. Persistence already
+  // happens inside deepseekLoginFlow on success; setup re-asserts it so a
+  // successful setup is self-contained and auditable.
+  let enablement = result.enablement || null
+  if (result.outcome === LOGIN_OUTCOME.AUTH_READY) {
+    try {
+      const config = await writeWebConfig(configDir, {
+        enabled: true,
+        mode: WEB_CONFIG_MODE.AUTO,
+        profile: name,
+      })
+      enablement = { enabled: config.enabled, mode: config.mode, profile: config.profile, file: config.file }
+    } catch { /* persistence is best-effort; login success is already proven */ }
+  }
+  return {
+    ...result,
+    policy: "deepseek-edge-setup-v16-18-1",
+    browser: "edge",
+    channel: "msedge",
+    setup: true,
+    enablement,
+    instruction: result.outcome === LOGIN_OUTCOME.AUTH_READY
+      ? `Setup complete. Profile "${name}" is signed in; web reasoning is ENABLED (mode=auto). Daily use: cd <project>; pi`
+      : result.instruction,
+  }
+}
+
 
 async function deepseekControl() {
   const action = args[1] || "status"
@@ -2050,6 +2165,30 @@ async function deepseekControl() {
       if (jsonOutput) printJson(report)
       else console.log(renderProfileDoctor(report))
       if (!report.ok) process.exitCode = 1
+      return
+    }
+
+    if (action === "setup") {
+      const browser = optionValue(args, "--browser") || positionalArg(args, 2) || "edge"
+      const name = optionValue(args, "--profile") || (positionalArg(args, 2) && positionalArg(args, 3) ? positionalArg(args, 3) : null)
+      if (!name) {
+        throw new Error("Usage: ocskill deepseek setup --browser edge --profile <name>")
+      }
+      const payload = await deepseekSetup(browser, name, configDir)
+      if (jsonOutput) printJson(payload)
+      else {
+        console.log(`DeepSeek Edge setup for profile "${name}"`)
+        console.log(`  browser: ${payload.browser || "edge"}`)
+        console.log(`  channel: ${payload.channel || "msedge"}`)
+        console.log(`  outcome: ${payload.outcome}`)
+        if (payload.authState) console.log(`  auth:    ${payload.authState}`)
+        if (payload.reason) console.log(`  reason:  ${payload.reason}`)
+        if (Number.isFinite(payload.attempts)) console.log(`  probes:  ${payload.attempts}${payload.bound ? `  (bound ${payload.bound})` : ""}`)
+        if (payload.enablement) console.log(`  enabled: web reasoning ON (mode=${payload.enablement.mode})`)
+        console.log(`  next:    ${payload.instruction}`)
+        console.log("  note:    UES never reads, stores or prints your password, cookies, tokens, OTP or CAPTCHA.")
+      }
+      if (payload.outcome !== LOGIN_OUTCOME.AUTH_READY) process.exitCode = 2
       return
     }
 
