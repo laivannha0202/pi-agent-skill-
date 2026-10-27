@@ -69,3 +69,10 @@ test("A8: a mixture only counts the valid behavioral receipt", () => {
   assert.equal(result.passed, true)
   assert.equal(result.evidence.passingReceiptCount, 1)
 })
+
+test("A9: valid node --test receipt with differing workspaceBefore is rejected as stale behavioral proof", () => {
+  const result = audit([receipt("node", ["--test"], { workspaceBefore: "old-workspace-fingerprint", workspaceAfter: fingerprint })])
+  assert.equal(result.passed, false)
+  assert.ok(result.failures.includes("fresh-behavioral-receipt-missing"))
+  assert.equal(result.evidence.passingReceiptCount, 0)
+})
