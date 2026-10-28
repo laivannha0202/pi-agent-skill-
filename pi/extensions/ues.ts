@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { destructiveShellRisk } from "../../lib/safety.mjs";
-import { automaticUesAdmission, automaticUesContinuation, classifyEngineeringTask, deterministicReadOnlyGitCommands, shouldRunDedicatedDiagnosis } from "../../lib/task-policy.mjs";
+import { automaticUesAdmission, automaticUesContinuation, classifyEngineeringTask, deterministicReadOnlyGitCommands, referencedSourceFiles, shouldRunDedicatedDiagnosis } from "../../lib/task-policy.mjs";
 import { resolveCapabilityModel } from "../../lib/model-policy.mjs";
 import { readModelPolicy, recordModelPerformance } from "../../lib/model-config.mjs";
 import { getUesConfigDir } from "../../lib/runtime-config.mjs";
@@ -1774,6 +1774,122 @@ function cap(text: string, limit = OUTPUT_LIMIT) {
   if (text.length <= limit) return text;
   return text.slice(0, limit) + "\n...[truncated by UES Pi adapter]";
 }
+
+function parentCommandFingerprint(command: string): string {
+  return createHash("sha256").update(String(command || "").trim()).digest("hex").slice(0, 16);
+}
+
+async function parentCommandEvidence(cwd: string): Promise<{ value: string; sufficient: boolean }> {
+  const root = String(cwd || process.cwd());
+  const parts: string[] = [];
+  let gitOk = true;
+  let sufficient = true;
+  try {
+    const head = await runProcess("git", ["rev-parse", "HEAD"], root);
+    const headValue = String(head.stdout || "").trim();
+    if (!headValue) gitOk = false;
+    parts.push("head=" + headValue);
+  } catch {
+    gitOk = false;
+    sufficient = false;
+  }
+  try {
+    const status = await runProcess("git", ["status", "--porcelain"], root);
+    parts.push("status=" + String(status.stdout || "").trim());
+  } catch {
+    gitOk = false;
+    sufficient = false;
+  }
+  if (gitOk) {
+    try {
+      const ignored = await runProcess("git", ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory"], root);
+      const ignoredPaths = String(ignored.stdout || "")
+        .split(String.fromCharCode(10))
+        .map((line) => line.trim().replace(/\/$/, ""))
+        .filter(Boolean)
+        .filter((p) => !UES_RUNTIME_DIRS.includes(p));
+      if (ignoredPaths.length > 0) sufficient = false;
+    } catch {
+      sufficient = false;
+    }
+  } else {
+    sufficient = false;
+  }
+  parts.push("path=" + process.env.PATH);
+  return { value: parts.join(String.fromCharCode(10)), sufficient: gitOk && sufficient };
+}
+
+function isRepeatedFailureExemptCommand(command: string): boolean {
+  const trimmed = String(command || "").trim();
+  if (!trimmed) return true;
+  const unquoted = trimmed.replace(/"[^"]*"/g, '""').replace(/'[^']*'/g, "''");
+  if (/[;&|<>`]/.test(unquoted)) return true;
+  if (/\$\(/.test(unquoted)) return true;
+  if (/\(/.test(unquoted)) return true;
+  const tokens = trimmed.split(/\s+/).filter(Boolean);
+  const executable = String(tokens[0] || "").replace(/^['"]|['"]$/g, "");
+  if (!executable) return true;
+  if (/^[A-Za-z]:$/.test(executable)) return true;
+  const shellBuiltins = new Set([
+    "cd", "dir", "echo", "set", "export", "alias", "source", ".", "type", "which",
+    "pwd", "pushd", "popd", "cls", "copy", "move", "del", "mkdir", "rmdir",
+    "if", "for", "while", "do", "done", "then", "else", "fi", "case", "esac",
+    "bash", "sh", "powershell", "pwsh", "cmd",
+  ]);
+  if (shellBuiltins.has(executable.toLowerCase())) return true;
+  return false;
+}
+
+function parentToolExitCode(event: any, text: string): number | null {
+  // V16.19.1: read the exit code where Pi actually publishes it. Pi's
+  // bash/powershell tools return `structuredContent.exit_code` and append
+  // "Command exited with code N" to the text; `details` carries only truncation
+  // metadata. The previous `Number(details.exitCode)` read was therefore always
+  // NaN (and `Number(null)` would have coerced a missing code to 0), so every
+  // failed command fell through to the generic "no test signature" branch and
+  // the 127/9009 command-not-found paths were unreachable.
+  const structured = event?.structuredContent?.exit_code;
+  if (typeof structured === "number" && Number.isFinite(structured)) return structured;
+  const fromDetails = event?.details?.exitCode;
+  if (typeof fromDetails === "number" && Number.isFinite(fromDetails)) return fromDetails;
+  const match = String(text || "").match(/exited with code\s*(\d+)/i)
+    || String(text || "").match(/exitCode:\s*(\d+)/i)
+    || String(text || "").match(/exit code[:\s]*(\d+)/i);
+  if (match) return Number(match[1]);
+  return null;
+}
+
+// Exit 1 is the documented "no match / predicate false" result for search and
+// comparison commands. Annotating those as IMPLEMENTATION_FAILURE injected a
+// false failure delta into the model's context (and fed the repeated-failure
+// guard) for a completely successful query.
+//
+// V16.19 Windows: `findstr` exits 1 on "no match" and `where` exits 1 on "not
+// found" -- both are answers, not failures. The executable token is reduced to
+// its basename and `.exe` suffix so `findstr.exe`, `C:\Windows\System32\findstr.exe`
+// and the MSYS spelling `grep.exe` classify like the bare name.
+const PREDICATE_EXIT_ONE_EXECUTABLES = new Set([
+  "grep", "egrep", "fgrep", "rg", "ag", "ack", "diff", "cmp", "test", "[",
+  "findstr", "where",
+]);
+
+function isPredicateExitOneCommand(command: string): boolean {
+  const tokens = String(command || "").trim().split(/\s+/).filter(Boolean);
+  if (!tokens.length) return false;
+  const rawExecutable = String(tokens[0] || "").replace(/^['"]|['"]$/g, "");
+  const executable = rawExecutable
+    .replaceAll("\\", "/")
+    .split("/")
+    .pop()!
+    .toLowerCase()
+    .replace(/\.exe$/, "");
+  if (PREDICATE_EXIT_ONE_EXECUTABLES.has(executable)) return true;
+  if (executable === "git") {
+    return tokens.includes("--quiet") || tokens.includes("--exit-code") || tokens[1] === "grep";
+  }
+  return false;
+}
+
 
 function stripFrontmatter(raw: string) {
   return raw.replace(/^---\s*\r?\n[\s\S]*?\r?\n---\s*\r?\n/, "").trim();
@@ -3749,6 +3865,182 @@ function compactContextPack(pack: any, recentFailure?: string, budgetChars?: num
   };
 }
 
+// ===========================================================================
+// V16.19 CONTEXT-STAGE ADMISSION (single production decision point)
+// ===========================================================================
+// The FAST/BALANCED admission and the LIGHT gate used to be inline inside
+// `runRoutedAgent`, which made the decision impossible to exercise without
+// paraphrasing it in a test. The decision now lives here, is exported, and is
+// driven by the shipped runtime itself, so a test executes the SAME code the
+// controller runs.
+//
+// The decision is total and fails CLOSED toward FULL_CONTEXT: a missing or
+// unreadable signal can only cost an extra escalation, never a cheaper stage.
+export const CONTEXT_ADMISSION_POLICY = "bounded-context-admission-v16-19";
+export const CONTEXT_ADMISSION_MAX_FILES = 3;
+export const CONTEXT_ADMISSION_HIGH_RISK_DOMAINS = Object.freeze([
+  "auth-security",
+  "payment",
+  "database",
+  "api-contract",
+]);
+
+function admissionFiles(values: any[]): string[] {
+  const files: string[] = [];
+  const seen = new Set<string>();
+  for (const value of Array.isArray(values) ? values : []) {
+    const raw = value && typeof value === "object" ? (value.path ?? value.file ?? "") : value;
+    const file = String(raw || "").replaceAll("\\", "/").trim();
+    if (!file || seen.has(file)) continue;
+    seen.add(file);
+    files.push(file);
+  }
+  return files;
+}
+
+/**
+ * Bounded-scope evidence for the LIGHT admission. Pure and deterministic: it
+ * only counts files the caller actually knows about -- declared by the task
+ * record, named by the task text, or present in the current change set.
+ *
+ * ZERO known files is UNKNOWN scope, never evidence of a bounded one: an
+ * unknown scope must pay for FULL_CONTEXT instead of claiming boundedness it
+ * has not observed.
+ */
+export function contextScopeEvidence(input: any = {}) {
+  const row = input && typeof input === "object" ? input : {};
+  const declared = admissionFiles([
+    ...(Array.isArray(row.declaredFiles) ? row.declaredFiles : []),
+    ...referencedSourceFiles(String(row.task || "")),
+  ]);
+  const changed = admissionFiles(Array.isArray(row.changedFiles) ? row.changedFiles : []);
+  const known = admissionFiles([...declared, ...changed]);
+  const reasons: string[] = [];
+  if (known.length === 0) reasons.push("scope-unknown");
+  else if (known.length > CONTEXT_ADMISSION_MAX_FILES) reasons.push(`scope-too-broad:${known.length}files`);
+  return {
+    declaredFileCount: declared.length,
+    changedFileCount: changed.length,
+    knownFileCount: known.length,
+    files: known.slice(0, 12),
+    bounded: reasons.length === 0,
+    reasons,
+  };
+}
+
+/**
+ * Decide whether the first turn may build the cheap LIGHT stage. FAST keeps its
+ * V16.18 lane; BALANCED is admitted only for a low-risk, single-subsystem,
+ * bounded task. Everything else is FULL_CONTEXT.
+ */
+export function resolveContextAdmission(input: any = {}) {
+  const row = input && typeof input === "object" ? input : {};
+  const executionProfile = String(row.executionProfile || "").toUpperCase();
+  const attempt = Math.max(1, Math.trunc(Number(row.attempt) || 1));
+  const risk = String(row.risk || "").toLowerCase();
+  const mode = String(row.mode || "");
+  const domains = (Array.isArray(row.domains) ? row.domains : []).map((value: any) => String(value));
+  const browserRequested = row.browserRequested === true;
+  const scope = contextScopeEvidence(row);
+
+  const commonReasons: string[] = [];
+  if (attempt !== 1) commonReasons.push("retry-attempt");
+  if (["high", "critical"].includes(risk)) commonReasons.push(`risk=${risk}`);
+  if (mode === "long-horizon") commonReasons.push("long-horizon");
+  if (browserRequested) commonReasons.push("browser-requested");
+
+  const fast = executionProfile === "FAST";
+  const balancedBlockers = [...commonReasons];
+  if (!fast) {
+    if (executionProfile !== "BALANCED") balancedBlockers.push(`profile=${executionProfile || "unknown"}`);
+    if (risk !== "low") balancedBlockers.push(`risk-not-low=${risk || "unknown"}`);
+    for (const domain of CONTEXT_ADMISSION_HIGH_RISK_DOMAINS) {
+      if (domains.includes(domain)) balancedBlockers.push(`high-risk-domain:${domain}`);
+    }
+    // A task that touches more than one subsystem is not "bounded" even when it
+    // names few files: the evidence it needs spans modules the light stage does
+    // not read. `domains` is the classifier's real field (`taskPolicy.domains`),
+    // not the `taskSignals.domains` field that never existed.
+    if (domains.length > 1) balancedBlockers.push(`cross-subsystem:${domains.join(",")}`);
+    for (const reason of scope.reasons) balancedBlockers.push(reason);
+  }
+
+  const fastLane = fast && commonReasons.length === 0;
+  const lightStageBalancedBounded = !fast && balancedBlockers.length === 0;
+  const lightStageEligible = fastLane || lightStageBalancedBounded;
+  return {
+    schemaVersion: 1,
+    policy: CONTEXT_ADMISSION_POLICY,
+    executionProfile: executionProfile || "unknown",
+    attempt,
+    risk,
+    mode,
+    domains,
+    browserRequested,
+    scope,
+    fastLane,
+    lightStageBalancedBounded,
+    lightStageEligible,
+    reasons: lightStageEligible ? [] : (fast ? commonReasons : balancedBlockers),
+  };
+}
+
+/**
+ * Build the LIGHT stage and let the real insufficiency gate decide the stage.
+ * Returns `pack: null` whenever the run must pay for FULL_CONTEXT, so a caller
+ * can never mistake a rejected LIGHT pack for an admitted one.
+ */
+export async function resolveContextStage(root: string, task: any, options: any = {}) {
+  const settings = options && typeof options === "object" ? options : {};
+  const admission = settings.admission && typeof settings.admission === "object"
+    ? settings.admission
+    : resolveContextAdmission(settings);
+  const escalate = (reasons: string[]) => ({
+    stage: CONTEXT_PIPELINE_STAGE.FULL,
+    reasons: Array.isArray(reasons) && reasons.length ? reasons : ["light-stage-not-admitted"],
+    pack: null,
+    admission,
+    escalated: true,
+  });
+  if (admission.lightStageEligible !== true) return escalate(admission.reasons);
+
+  const light = await buildLightTaskContext(root, task, {
+    policy: settings.policy,
+    role: settings.role,
+    changedFiles: Array.isArray(settings.changedFiles) ? settings.changedFiles : [],
+    workspaceFingerprint: settings.workspaceFingerprint,
+    recentFailure: settings.recentFailure,
+    facts: settings.facts || { longContext: false, browser: false, vision: false },
+  }).catch(() => null);
+  if (!light) return escalate(["light-context-unavailable"]);
+
+  const gate = lightContextInsufficient(light, {
+    highRiskDomain: (admission.domains || []).some((domain: string) =>
+      CONTEXT_ADMISSION_HIGH_RISK_DOMAINS.includes(domain),
+    ),
+    needsVerificationDetail: String(settings.role || "").startsWith("ues-verifier"),
+    crossSubsystem: (admission.domains || []).length > 1,
+  });
+  if (gate.insufficient) {
+    return {
+      stage: CONTEXT_PIPELINE_STAGE.FULL,
+      reasons: gate.reasons,
+      pack: null,
+      admission,
+      gate,
+      escalated: true,
+    };
+  }
+  return {
+    stage: CONTEXT_PIPELINE_STAGE.LIGHT,
+    reasons: gate.reasons || [],
+    pack: light,
+    admission,
+    gate,
+    escalated: false,
+  };
+}
+
 async function runRoutedAgent(
   agent: AgentName,
   task: string,
@@ -4121,6 +4413,9 @@ async function runRoutedAgent(
   // reverse). `FULL_CONTEXT` is the honest default until the light gate passes.
   let contextStage: string = "FULL_CONTEXT";
   let contextStageReasons: string[] = [];
+  // V16.19: the admission decision that produced the stage, kept so the run
+  // receipt can state WHY a BALANCED run was (or was not) bounded.
+  let contextAdmission: any = null;
   // V16.18: the built pack is hoisted to function scope so the deterministic
   // decision capsule can read the bounded discovery result without widening the
   // `pack` binding inside the context-build branch.
@@ -4168,12 +4463,19 @@ async function runRoutedAgent(
     // hierarchy, repository graph, verified memory, capability fabric). The
     // stage is a spend decision, never a capability removal, and the light
     // gate fails OPEN toward escalation: an inconclusive light stage escalates.
-    const lightStageEligible =
-      v16_6?.executionProfile === "FAST" &&
-      attempt === 1 &&
-      !["high", "critical"].includes(String(taskPolicy.risk || "").toLowerCase()) &&
-      taskPolicy.mode !== "long-horizon" &&
-      !browserRequested;
+    const contextAdmissionDecision = resolveContextAdmission({
+      executionProfile: v16_6?.executionProfile,
+      attempt,
+      risk: taskPolicy.risk,
+      mode: taskPolicy.mode,
+      domains: taskPolicy.domains || [],
+      browserRequested,
+      task,
+      declaredFiles: taskFiles(task),
+      changedFiles: workspaceState.changedFiles,
+    });
+    contextAdmission = contextAdmissionDecision;
+    const lightStageEligible = contextAdmissionDecision.lightStageEligible;
     // Only FULL_CONTEXT packs are cached, and only a run that needs FULL reads
     // the cache. A LIGHT-eligible run always builds its cheap LIGHT stage fresh
     // (~30ms) instead of risking a FULL pack (wasted tokens) or storing a LIGHT
@@ -4182,7 +4484,8 @@ async function runRoutedAgent(
     contextCacheHit = Boolean(pack);
     if (!pack) {
       if (lightStageEligible) {
-        const light = await buildLightTaskContext(cwd, taskRecord(task), {
+        const lightDecision = await resolveContextStage(cwd, taskRecord(task), {
+          admission: contextAdmission,
           policy: runtimePolicy,
           role,
           changedFiles: workspaceState.changedFiles || [],
@@ -4194,23 +4497,10 @@ async function runRoutedAgent(
             browser: false,
             vision: visualEvidenceNeeded(task),
           },
-        }).catch(() => null);
-        const lightGate = light
-          ? lightContextInsufficient(light, {
-              highRiskDomain: ["auth-security", "payment", "database", "api-contract"]
-                .some((domain) => (taskPolicy.domains || []).includes(domain)),
-              needsVerificationDetail: role.startsWith("ues-verifier"),
-              crossSubsystem: Number(v16_6?.taskSignals?.domains?.length || 0) > 1,
-            })
-          : { insufficient: true, reasons: ["light-context-unavailable"], stage: "FULL_CONTEXT" };
-        if (light) {
-          contextStage = lightGate.insufficient ? "FULL_CONTEXT" : "LIGHT_CONTEXT";
-          contextStageReasons = lightGate.reasons || [];
-          if (!lightGate.insufficient) pack = light;
-        } else {
-          contextStage = "FULL_CONTEXT";
-          contextStageReasons = ["light-context-unavailable"];
-        }
+        });
+        contextStage = lightDecision.stage;
+        contextStageReasons = lightDecision.reasons || [];
+        if (lightDecision.pack) pack = lightDecision.pack;
       }
       if (!pack) {
         contextStage = "FULL_CONTEXT";
@@ -4372,6 +4662,9 @@ async function runRoutedAgent(
     stage: contextStage,
     policy: CONTEXT_PIPELINE_POLICY_NAME,
     lightAdmitted: contextStage === "LIGHT_CONTEXT",
+    // V16.19: bounded-scope admission is part of the receipt, so a BALANCED run
+    // proves whether observed scope (not a zero-file guess) admitted it.
+    balancedBounded: contextAdmission?.lightStageBalancedBounded === true,
     reasons: contextStageReasons,
     buildMs: contextBuildMs,
     performance: contextPerformance || null,
@@ -7782,6 +8075,9 @@ export default function (pi: ExtensionAPI) {
   );
   const UES_PARENT_TOOL_NAMES = new Set(["ues_cli", "ues_execute", "ues_service", "ues_session", "ues_dispatch"]);
   const ALWAYS_ON_PARENT_TOOLS = new Set(["ues_code"]);
+  // Bounded parent-tool failure memory.
+  const parentToolFailureFingerprints = new Set<string>();
+  const parentFailedCommandFingerprints = new Map<string, { at: number; evidence: string; sufficient: boolean }>();
   let normalActiveTools: string[] | null = null;
   let parentRunToolCalls = 0;
   let parentRunLastAssistant: any = null;
@@ -8517,6 +8813,29 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("tool_call", async (event, ctx) => {
     const toolName = String(event.toolName || "");
+    // V16.19 parent-tool recovery: repeated failed commands.
+    // V16.19.2 scope fix: this guard belongs to an ACTIVE UES run. Outside UES
+    // mode it must never hard-block a user's own bash/powershell command, and a
+    // fingerprint recorded inside a run must not leak into the next normal chat
+    // (a user iterating on a failing command in a plain `pi` session is not a
+    // UES loop). Annotation of a failure stays always-on; only the block is
+    // scoped.
+    if (uesModeActive() && (toolName === "bash" || toolName === "powershell")) {
+      const earlyCommand = String((event as any)?.input?.command || "");
+      if (!isRepeatedFailureExemptCommand(earlyCommand)) {
+        const earlyFingerprint = parentCommandFingerprint(earlyCommand);
+        const earlyFailure = parentFailedCommandFingerprints.get(earlyFingerprint);
+        if (earlyFailure) {
+          const currentEvidence = await parentCommandEvidence(ctx?.cwd || process.cwd());
+          if (earlyFailure.evidence === currentEvidence.value && earlyFailure.sufficient === true && currentEvidence.sufficient === true) {
+            return {
+              block: true,
+              reason: "UES blocked a repeated failed command with no new evidence: " + cap(earlyCommand, 300),
+            };
+          }
+        }
+      }
+    }
     // V16.7.1 loop guard: a tool call is real action progress. It resets the
     // no-progress window on the NEXT completed assistant turn.
     parentAgentWatchdog.observeAction("tool-call");
@@ -8611,9 +8930,99 @@ export default function (pi: ExtensionAPI) {
       if (mutation.mutation === "yes") parentAgentWatchdog.observeAction("file-mutation");
     }
     const postWrite = await appendPostWriteFeedback(event as any, eventCtx as any, toolName);
-    if (!uesModeActive()) return postWrite;
-    if (!toolName || toolName === "bash" || toolName === "powershell") return postWrite;
     const resultText = toolResultText(event);
+    if (toolName === "bash" || toolName === "powershell") {
+      const command = String(((event as any)?.input && (event as any).input.command) || "");
+      const exitCode = parentToolExitCode(event as any, resultText);
+      if ((event as any)?.isError === true) {
+        if (exitCode === 1 && isPredicateExitOneCommand(command)) {
+          parentFailedCommandFingerprints.delete(parentCommandFingerprint(command));
+          return postWrite;
+        }
+        const { classifyChildFailure } = await import("../../lib/integration-transaction-v16-15.mjs");
+        const failure = classifyChildFailure({
+          exitCode,
+          error: resultText,
+          stopReason: String((event as any)?.stopReason || ""),
+          aborted: (event as any)?.aborted === true,
+        });
+        const commandFingerprint = parentCommandFingerprint(command);
+        // V16.19.2 scope fix: only an ACTIVE UES run may record a fingerprint
+        // that the tool_call guard can later hard-block. Outside UES mode the
+        // failure is still annotated below, but no blocking state is created
+        // (and any stale entry for this command is dropped: fail-open).
+        if (uesModeActive() && !isRepeatedFailureExemptCommand(command)) {
+          const evidenceResult = await parentCommandEvidence(String((eventCtx as any)?.cwd || process.cwd()));
+          if (evidenceResult.sufficient) {
+            parentFailedCommandFingerprints.set(commandFingerprint, {
+              at: Date.now(),
+              evidence: evidenceResult.value,
+              sufficient: true,
+            });
+          } else {
+            parentFailedCommandFingerprints.delete(commandFingerprint);
+          }
+        } else {
+          parentFailedCommandFingerprints.delete(commandFingerprint);
+        }
+        const failureFingerprint = createHash("sha256")
+          .update(toolName + "\u0000" + command + "\u0000" + failure.class + "\u0000" + String(failure.reason) + "\u0000" + resultText.slice(0, 500))
+          .digest("hex")
+          .slice(0, 20);
+        const firstOccurrence = !parentToolFailureFingerprints.has(failureFingerprint);
+        if (firstOccurrence) parentToolFailureFingerprints.add(failureFingerprint);
+        const originalContent = Array.isArray((event as any).content)
+          ? (event as any).content
+          : [{ type: "text", text: resultText }];
+        const blocks: any[] = [];
+        if (firstOccurrence) {
+          const hintParts = [
+            "UES failure delta: class=" + failure.class + "; retryable=" + failure.retryable + "; reason=" + failure.reason + ".",
+          ];
+          if (/command not found|not recognized|ENOENT/i.test(resultText)) {
+            hintParts.push("Recovery: verify the executable name and PATH, or use an available equivalent; do not repeat the same failed command.");
+          } else if (/SyntaxError/i.test(resultText)) {
+            hintParts.push("Recovery: fix the syntax error, then rerun the targeted file/test; this remains FAIL until verified.");
+          } else if (/anchor|patch failed|hunk/i.test(resultText)) {
+            hintParts.push("Recovery: re-read the target file and recompute the patch anchor; do not blindly retry the same patch.");
+          } else if (/timeout|timed out/i.test(resultText) || exitCode === null && (event as any)?.stopReason) {
+            hintParts.push("Recovery: reduce scope or use ues_service for long-running work; retry only with new evidence.");
+          } else if ((event as any)?.aborted === true) {
+            hintParts.push("Recovery: cancellation was requested; do not auto-retry without explicit user intent.");
+          } else {
+            hintParts.push("Recovery: address the root cause before retrying; repeated identical failures are blocked.");
+          }
+          if (!failure.retryable) hintParts.push("No automatic retry.");
+          blocks.push({ type: "text", text: hintParts.join(" ") });
+        }
+        return {
+          content: [...originalContent, ...blocks],
+          details: {
+            ...(((event as any).details && typeof (event as any).details === "object") ? (event as any).details : {}),
+            uesToolFailure: {
+              tool: toolName,
+              class: failure.class,
+              retryable: failure.retryable,
+              reason: failure.reason,
+              fingerprint: failureFingerprint,
+              hintDelivered: firstOccurrence,
+            },
+          },
+          isError: true,
+          usage: (event as any).usage,
+          // V16.19.1: Pi DELETES structuredContent when a tool_result handler
+          // returns content without replacing it (runner.js: `if
+          // (handlerResult.structuredContent === undefined) delete ...`).
+          // Omitting it silently dropped exit_code/output/truncated/
+          // full_output_path from every annotated failure.
+          structuredContent: (event as any)?.structuredContent,
+        };
+      }
+      parentFailedCommandFingerprints.delete(parentCommandFingerprint(command));
+      return postWrite;
+    }
+    if (!uesModeActive()) return postWrite;
+    if (!toolName) return postWrite;
     const allTools = typeof (pi as any).getAllTools === "function" ? (pi as any).getAllTools() : [];
     const descriptor = allTools.find((tool: any) => String(tool?.name || "") === toolName);
     const policy = mcpExecutionPolicy(descriptor || { name: toolName });
@@ -8726,6 +9135,8 @@ export default function (pi: ExtensionAPI) {
       },
       isError: event.isError === true,
       usage: event.usage,
+      // Keep the machine-readable result when only text blocks are appended.
+      structuredContent: event.structuredContent,
     };
   }
 

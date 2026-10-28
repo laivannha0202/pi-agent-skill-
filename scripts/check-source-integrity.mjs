@@ -2284,9 +2284,68 @@ const V16_18_CONTRACTS = Object.freeze([
   },
 ])
 
+const V16_19_CONTRACTS = Object.freeze([
+  {
+    file: "lib/task-policy.mjs",
+    minBytes: 20_000,
+    required: [
+      // Phase 1: read-only detection must honor Vietnamese negation ("đừng sửa",
+      // "không tăng version" stays a constraint, "chỉ kiểm tra" is read-only).
+      "không",
+      "đừng",
+      "chỉ",
+    ],
+  },
+  {
+    file: "lib/requirement-contract.mjs",
+    minBytes: 10_000,
+    required: [
+      // Phase 1: compound clauses ("sửa A nhưng không đổi B") must split into
+      // separate MUST / MUST_NOT requirements; negation verbs include "tăng".
+      "and|và|nhưng|nhung|but|mà|ma",
+      "tăng|tang|bump|increase|raise",
+    ],
+  },
+  {
+    file: "pi/extensions/ues.ts",
+    minBytes: 400_000,
+    required: [
+      // Phase 5: LIGHT_CONTEXT admitted for bounded BALANCED tasks (safe subset).
+      "lightStageBalancedBounded",
+    ],
+  },
+])
+
 export function validateV16_18SourceIntegrity(root = ROOT) {
   const failures = []
   for (const contract of V16_18_CONTRACTS) {
+    const full = path.join(root, contract.file)
+    let text = ""
+    try {
+      const info = statSync(full)
+      if (!info.isFile()) {
+        failures.push(`${contract.file}: not a file`)
+        continue
+      }
+      if (info.size < contract.minBytes) failures.push(`${contract.file}: too small (${info.size} < ${contract.minBytes})`)
+      text = readFileSync(full, "utf8")
+    } catch (error) {
+      failures.push(`${contract.file}: unreadable (${error?.code || "error"})`)
+      continue
+    }
+    for (const marker of contract.required) {
+      if (!text.includes(marker)) failures.push(`${contract.file}: missing required marker ${marker}`)
+    }
+    for (const marker of contract.forbidden || []) {
+      if (text.includes(marker)) failures.push(`${contract.file}: forbidden marker present ${marker}`)
+    }
+  }
+  return failures
+}
+
+export function validateV16_19SourceIntegrity(root = ROOT) {
+  const failures = []
+  for (const contract of V16_19_CONTRACTS) {
     const full = path.join(root, contract.file)
     let text = ""
     try {
@@ -2501,6 +2560,13 @@ export function runSourceIntegrity() {
   if (v16_18Failures.length) {
     process.stderr.write("V16.18 source-integrity validation failed:\n")
     for (const failure of v16_18Failures) process.stderr.write(`- ${failure}\n`)
+    return 1
+  }
+
+  const v16_19Failures = validateV16_19SourceIntegrity(ROOT)
+  if (v16_19Failures.length) {
+    process.stderr.write("V16.19 source-integrity validation failed:\n")
+    for (const failure of v16_19Failures) process.stderr.write(`- ${failure}\n`)
     return 1
   }
 

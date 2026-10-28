@@ -3,7 +3,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -14,9 +14,23 @@ import {
   writeResearchCache,
 } from "../lib/research-cache-helper-v16-13.mjs";
 
+// Every workspace created by this file is removed at the end of the run. The
+// previous helper leaked one `ues-research-cache-*` directory per tempDir()
+// call (3 per run) into os.tmpdir(); nothing owned those directories, so they
+// accumulated silently across releases. Only directories created by THIS run
+// are touched: pre-existing history is left alone.
+const CREATED_DIRS = [];
 function tempDir() {
-  return mkdtempSync(path.join(tmpdir(), "ues-research-cache-"));
+  const dir = mkdtempSync(path.join(tmpdir(), "ues-research-cache-"));
+  CREATED_DIRS.push(dir);
+  return dir;
 }
+
+test.after(() => {
+  for (const dir of CREATED_DIRS.splice(0)) {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
+  }
+});
 
 test("cache helper policy id is byte-stable", () => {
   assert.equal(RESEARCH_CACHE_POLICY, "research-cache-helper-v16-13");

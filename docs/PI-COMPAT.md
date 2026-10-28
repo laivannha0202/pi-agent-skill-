@@ -2,9 +2,15 @@
 
 Repository này hiện đóng gói UES cho **Pi Agent**.
 
-<!-- ues-version: 16.18.0 -->
+<!-- ues-version: 16.19.0 -->
 
-**Current package runtime:** 16.18.0 — Adaptive Full-Power Optimization. V16.18 changes **when** existing capabilities activate instead of removing them: provisional FAST discovery with lossless escalation, one run-scoped workspace generation, lazy LSP hydration, a two-stage LIGHT/FULL context pipeline, a planner value gate, a deterministic weak-model decision capsule, and a **PARTIAL** global resource governor that currently guards the advisor consult only. FAST / BALANCED / DEEP remain the public profiles. No permission, containment or verification authority is weakened, and provider token usage remains `NOT_MEASURED` offline. The V16 deterministic correctness gates and the V15.9 adaptive architecture remain in force underneath.
+**Current package runtime:** 16.19.0 — Adaptive Full-Power Optimization. V16.18 changes **when** existing capabilities activate instead of removing them: provisional FAST discovery with lossless escalation, one run-scoped workspace generation, lazy LSP hydration, a two-stage LIGHT/FULL context pipeline, a planner value gate, a deterministic weak-model decision capsule, and a **PARTIAL** global resource governor that currently guards the advisor consult only. FAST / BALANCED / DEEP remain the public profiles. No permission, containment or verification authority is weakened, and provider token usage remains `NOT_MEASURED` offline. The V16 deterministic correctness gates and the V15.9 adaptive architecture remain in force underneath.
+
+## V16.19.0 Windows path and predicate reliability
+
+A model that reads its workspace path from a Git-Bash `pwd` sees `/d/Code/repo`. Node on Windows reads the leading `/` as drive-root-relative, so `path.resolve(root, "/d/Code/repo/lib/a.mjs")` became `D:\d\Code\repo\lib\a.mjs` and every Node-side file surface (`ues_code` read/edit, document ingestion, LSP file operations, `ues_service` cwd) reported "escapes workspace root" for a file that is inside the workspace. `lib/windows-paths.mjs` now maps `/x/...` and `/cygdrive/x/...` drive forms to native paths on Windows and compares workspace containment case-insensitively, so `d:\code\repo` and `D:\Code\repo` agree. The bridge is Windows-only, leaves `/tmp`, `/var/tmp` and relative paths untouched, and still rejects an MSYS path that resolves outside the workspace.
+
+Windows predicates exit 1 as an answer, not as a failure: `findstr` (no match) and `where` (not found) are now predicate exit-1 commands like `grep`/`rg`/`git diff --quiet`, so they keep their original result and never inject a false failure delta or block a retry. Genuine errors (for example `findstr` exit 2) remain FAIL with exit code and stderr intact.
 
 ## V16.18 Adaptive Full-Power Optimization
 

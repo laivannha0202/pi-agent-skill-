@@ -4,6 +4,35 @@
 
 ### Fixed
 
+- V16.19.0 Windows path bridge: a model that learned its workspace path from a
+  Git-Bash `pwd` (`/d/Code/repo/lib/a.mjs`) handed that string to a Node tool,
+  where `path.resolve` read the leading `/` as drive-root-relative. The request
+  became `D:\d\Code\repo\lib\a.mjs`, so `ues_code` read/edit/document and the
+  service cwd check all failed with "escapes workspace root" for a file inside
+  the workspace. `lib/windows-paths.mjs` maps `/x/...` and `/cygdrive/x/...`
+  drive forms to native paths on Windows and compares containment
+  case-insensitively (`d:\code\repo` is the same directory as `D:\Code\repo`).
+  POSIX hosts, `/tmp`, `/var/tmp` and relative paths are unchanged, and an MSYS
+  path outside the workspace is still rejected.
+- V16.19.0 Windows predicates: `findstr` (exit 1 = no match) and `where`
+  (exit 1 = not found) were annotated as IMPLEMENTATION_FAILURE, injecting a
+  false failure delta and feeding the repeated-failure guard. They are now
+  predicate exit-1 commands, and the executable token is reduced to its basename
+  and `.exe` suffix so `findstr.exe` and `C:\Windows\System32\findstr.exe`
+  classify like the bare name. Exit 2 and genuine failures stay FAIL.
+
+- V16.19.0 parent-tool recovery scope: the repeated-failure hard block now
+  applies only to an ACTIVE UES run. Outside UES mode a user's own
+  bash/powershell command is never blocked, and a fingerprint recorded inside a
+  run no longer leaks into the next normal chat. Failure annotation stays
+  always-on; predicate exit-1 results (grep/rg/git diff) still keep their
+  original FAIL result, exit code, structuredContent and stderr, while genuine
+  errors of the same commands stay annotated. Fail-open on insufficient
+  evidence (ignored paths present, non-Git workspace) is unchanged.
+- Test hygiene: `test/research-cache-v16-13.test.mjs` leaked one
+  `ues-research-cache-*` directory per `tempDir()` call (3 per run) into the OS
+  temp directory; it now removes only the directories it created.
+
 - Resource governor (V16.18): per-acquisition handles are separated from lease
   records, `live()` counts units, anonymous acquisitions receive unique IDs,
   re-entrancy requires a live parent handle, invalid caps/units are rejected,
@@ -52,6 +81,12 @@
 - Pi browser tests: the history-detector fixture launches Microsoft Edge once
   and opens a fresh context per test, so the file runs in ~4s instead of
   exceeding the bounded runner's 45s per-file hang bound.
+
+## [16.19.0] - 2026-10-12
+
+### Changed
+
+- V16.19.0: deep runtime optimization & reliability. Expanded LIGHT_CONTEXT admission to bounded BALANCED tasks (safe subset) with lossless escalation. Strengthened requirement-contract clause splitting ("sửa A nhưng không đổi B" -> separate MUST/MUST_NOT) and Vietnamese negation handling in read-only detection. Added V16.19 prompt-understanding regression tests and source-integrity contract.
 
 ## [16.18.0] - 2026-10-11
 
